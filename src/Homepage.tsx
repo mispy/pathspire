@@ -5,99 +5,157 @@ import {observer} from 'mobx-react'
 
 import * as d3 from 'd3'
 import * as d3_chromatic from 'd3-scale-chromatic'
-
+import * as PIXI from 'pixi.js'
 declare global {
   interface Window {
     homepageStart: Function
   }
 }
 
-window.homepageStart = function() {
-    const el = ReactDOM.render(<Forest width={window.innerWidth} height={window.innerHeight}/>, document.body)
+class Hex {
+    static directions = [
+        new Hex(+1, -1, 0), new Hex(+1, 0, -1), new Hex(0, +1, -1),
+        new Hex(-1, +1, 0), new Hex(-1, 0, +1), new Hex(0, -1, +1)
+    ]
 
-    window.onresize = function() {
-        ReactDOM.render(<Forest width={window.innerWidth} height={window.innerHeight}/>, document.body)
-    }
-}
+    static zero = new Hex(0, 0, 0)
 
-class Grid {
-    @observable width: number
-    @observable height: number
-
-    @computed get centerX() { return Math.floor(this.width/2) }
-    @computed get centerY() { return Math.floor(this.height/2) }
-
-    constructor(width: number, height: number) {
-        this.width = width
-        this.height = height
-    }
-
-    distFromCenter(i: number, j: number) {
-        return Math.sqrt((i-this.centerX)**2 + (j-this.centerY)**2)
-    }
-
-    map<T>(callback: (x: number, y: number) => T) {
-        const results = []
-        for (let i = 0; i < this.width; i++) {
-            for (let j = 0; j < this.height; j++) {
-                results.push(callback(i, j))
+    static ring(center: Hex, radius: number): Hex[] {
+        const results: Hex[] = []
+        let hex = center.add(Hex.directions[4].scale(radius))
+        for (let i = 0; i < 6; i++) {
+            for (let j = 0; j < radius; j++) {
+                results.push(hex)
+                hex = hex.neighbor(i)
             }
         }
         return results
     }
+
+    static spiral(center: Hex, radius: number) {
+        const results = [center]
+        for (let i = 1; i < radius; i++) {
+            results.push(...Hex.ring(center, i))
+        }
+        return results
+    }
+
+    add(b: Hex) {
+        return new Hex(this.q+b.q, this.r+b.r, this.s+b.s)
+    }
+
+    scale(amount: number) {
+        return new Hex(this.q*amount, this.r*amount, this.s*amount)
+    }
+
+    neighbor(index: number) {
+        return this.add(Hex.directions[index])
+    }
+
+    q: number
+    r: number
+    s: number
+
+    constructor(q: number, r: number, s: number) {
+        console.assert(q + r + s == 0)
+        this.q = q
+        this.r = r
+        this.s = s
+    }
 }
 
-@observer
-class Forest extends React.Component<{ width: number, height: number }> {
-    @computed get width() { return this.props.width }
-    @computed get height() { return this.props.height }
+class HexGrid {
+    cells: Map<string, boolean> = new Map()
 
-    @computed get grid() {
-        const size = 51
-        return new Grid(size, 2*Math.floor(size * (this.height/this.width) / 2)+1)  
+    constructor(radius: number) {        
+        for (var i = -radius; i <= radius; i++) {
+            for (var j = -radius; j <= radius; j++) {
+                this.set(new Hex(i, j, -i-j), true)
+            }
+        }
     }
 
-    @observable offset = 0.1
-
-    @action.bound frame() {
-        this.offset += 0.004
-        this.draw()
-        requestAnimationFrame(this.frame)        
+    get(hex: Hex) {
+        return this.cells.get(`${hex.q},${hex.r},${hex.s}`)
     }
 
-    base: HTMLCanvasElement
-    ctx: CanvasRenderingContext2D
-    componentDidMount() {
-        this.ctx = this.base.getContext('2d') as CanvasRenderingContext2D
-        requestAnimationFrame(this.frame)
+    set(hex: Hex, value: boolean) {
+        return this.cells.set(`${hex.q},${hex.r},${hex.s}`, value)
     }
 
-    draw() {
-        const {grid, offset, ctx} = this
-        const tileWidth = this.props.width/grid.width
-        const tileHeight = this.props.height/grid.height
-        const schemes = ["Spectral"]//["Greens", "Greys", "Oranges", "Purples", "Reds", "BuGn", "BuPu", "GnBu", "OrRd", "PuBuGn", "PuBu", "PuRd", "RdPu", "YlGnBu", "YlGn", "YlOrBr", "YlOrRd"]
-        const scales = schemes.map(k => (d3_chromatic as any)["interpolate"+k])//Object.keys(d3_chromatic).filter(k => k.startsWith("interpolate")).map(k => d3_chromatic[k])
-
-        grid.map((i, j) => {
-            const distFromCenter = grid.distFromCenter(i, j)
-            
-            let v = (1-distFromCenter/grid.distFromCenter(0, 0) + this.offset)
-            const index = Math.floor(v/2 % scales.length)
-            v = v % 2 < 1 ? v%1 : 1 - v%1
-
-            const color = scales[index](v)
-
-            ctx.fillStyle = color
-            ctx.fillRect(tileWidth*i, tileHeight*j, tileWidth, tileHeight)
-        })        
+    forEach(callback: (hex: Hex) => void) {
+        return this.cells.forEach((val, key) => {
+            const [q, r, s] = key.split(",").map(s => parseInt(s))
+            callback(new Hex(q, r, s))
+        })
     }
-
-    render() {
-        return <canvas width={this.props.width} height={this.props.height}/>
-    }
-
 }
+
+function drawHexagon(graphics: PIXI.Graphics, cx: number, cy: number, size: number) {
+    const path = []
+    for (var i = 0; i < 6; i++) {
+        const angle = Math.PI/180 * (60*i + 30)
+        path.push(Math.round(cx+size*Math.cos(angle)))
+        path.push(Math.round(cy+size*Math.sin(angle)))
+    }
+    graphics.drawPolygon(path)
+}
+
+declare var require: any
+window.homepageStart = function() {
+    //const PIXI = require('pixi.js')
+    const app = new PIXI.Application(window.innerWidth, window.innerHeight, { transparent: true })
+    document.body.appendChild(app.view)
+
+    const size = 10
+
+    const graphics = new PIXI.Graphics()
+    //graphics.beginFill(0)
+    //drawHexagon(graphics, 0, 0, size)
+    graphics.beginFill(0xFFFFFF)
+    drawHexagon(graphics, 0, 0, size)
+    graphics.endFill()
+    const hexTexture = app.renderer.generateTexture(graphics)
+
+    const cx = Math.round(app.renderer.width/2)
+    const cy = Math.round(app.renderer.height/2)
+    const container = new PIXI.Container()
+    app.stage.addChild(container)
+
+    app.renderer.roundPixels = true
+
+    const hexes = Hex.spiral(Hex.zero, 100)
+
+    let offset = 0
+    let timer = -1
+    let elapsed = 0
+    app.ticker.add(deltaTime => {
+        if (offset >= hexes.length)
+            return
+
+        timer += deltaTime
+        elapsed += deltaTime
+        const timeRequired = 1 * Math.pow(0.99, elapsed)
+
+        while (timer > timeRequired && offset < hexes.length-1) {
+            timer -= timeRequired
+
+            offset += 1
+            const hex = hexes[offset]
+            const screenX = cx + size * Math.sqrt(3) * (hex.q + hex.r/2)
+            const screenY = cy + size * 3/2 * hex.r
+            const hexSprite = new PIXI.Sprite(hexTexture)
+            hexSprite.x = screenX
+            hexSprite.y = screenY
+            hexSprite.tint = Math.random() * 0xFFFFFF
+            hexSprite.alpha = 0.5
+            container.addChild(hexSprite)
+        }
+
+        container.children.forEach(sprite => (sprite as PIXI.Sprite).tint = Math.random() * 0xFFFFFF)
+    })
+}
+
 
 @observer
 export default class Homepage extends React.Component {
