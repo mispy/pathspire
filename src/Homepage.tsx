@@ -1,3 +1,4 @@
+import * as _ from 'lodash'
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import {observable, computed, action} from 'mobx'
@@ -21,6 +22,8 @@ class Hex {
     static zero = new Hex(0, 0, 0)
 
     static ring(center: Hex, radius: number): Hex[] {
+        if (radius == 0) return [center]
+
         const results: Hex[] = []
         let hex = center.add(Hex.directions[4].scale(radius))
         for (let i = 0; i < 6; i++) {
@@ -32,12 +35,23 @@ class Hex {
         return results
     }
 
-    static spiral(center: Hex, radius: number) {
-        const results = [center]
-        for (let i = 1; i < radius; i++) {
+    static rings(center: Hex, startRadius: number, endRadius: number) {
+        const results = []
+        for (let i = startRadius; i < endRadius; i++) {
             results.push(...Hex.ring(center, i))
         }
         return results
+    }
+
+    readonly q: number
+    readonly r: number
+    readonly s: number
+
+    constructor(q: number, r: number, s: number) {
+        console.assert(q + r + s == 0)
+        this.q = q
+        this.r = r
+        this.s = s
     }
 
     add(b: Hex) {
@@ -52,35 +66,28 @@ class Hex {
         return this.add(Hex.directions[index])
     }
 
-    q: number
-    r: number
-    s: number
+    get neighbors() {
+        return Hex.directions.map(hex => this.add(hex))
+    }
 
-    constructor(q: number, r: number, s: number) {
-        console.assert(q + r + s == 0)
-        this.q = q
-        this.r = r
-        this.s = s
+    get key() {
+        return `${this.q},${this.r},${this.s}`        
     }
 }
 
-class HexGrid {
-    cells: Map<string, boolean> = new Map()
+class HexGrid<T> {
+    @observable cells: Map<string, T> = new Map()
 
-    constructor(radius: number) {        
-        for (var i = -radius; i <= radius; i++) {
-            for (var j = -radius; j <= radius; j++) {
-                this.set(new Hex(i, j, -i-j), true)
-            }
-        }
+    constructor() {        
     }
+    
 
     get(hex: Hex) {
-        return this.cells.get(`${hex.q},${hex.r},${hex.s}`)
+        return this.cells.get(hex.key)
     }
 
-    set(hex: Hex, value: boolean) {
-        return this.cells.set(`${hex.q},${hex.r},${hex.s}`, value)
+    set(hex: Hex, value: T) {
+        return this.cells.set(hex.key, value)
     }
 
     forEach(callback: (hex: Hex) => void) {
@@ -91,69 +98,109 @@ class HexGrid {
     }
 }
 
-function drawHexagon(graphics: PIXI.Graphics, cx: number, cy: number, size: number) {
+function hexagonPoints(cx: number, cy: number, size: number) {
     const path = []
     for (var i = 0; i < 6; i++) {
         const angle = Math.PI/180 * (60*i + 30)
-        path.push(Math.round(cx+size*Math.cos(angle)))
-        path.push(Math.round(cy+size*Math.sin(angle)))
+        path.push(Math.round(cx+size*Math.cos(angle))+","+Math.round(cy+size*Math.sin(angle)))
     }
-    graphics.drawPolygon(path)
+    return path
+}
+
+class Population {
+    hex: Hex
+    @observable color: string
+
+    constructor(hex: Hex, color: string) {
+        this.hex = hex
+        this.color = color
+    }
+}
+
+class RingSpeciesSimulation {
+    @computed get mountainSize() { return 10 }
+    @computed get ringSize() { return 5 }
+
+    @computed get ringHexes() {
+        const {mountainSize, ringSize} = this
+        return Hex.rings(Hex.zero, mountainSize, mountainSize+ringSize)
+    }
+
+    hexGrid: HexGrid<Population>
+    constructor() {
+        this.hexGrid = new HexGrid<Population>()
+        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Population(hex, Math.random() > 0.5 ? "#000" : "#fff")))
+    }
+
+    @computed get populations(): Population[] {
+        return this.ringHexes.map(hex => this.hexGrid.get(hex) as Population)
+    }
+
+
+    frame() {
+        const hasChanged = new Map<string, boolean>()
+        for (let pop of this.populations) {
+            const willReproduce = true
+
+            if (willReproduce) {
+                const neighbors = _(pop.hex.neighbors).map(hex => this.hexGrid.get(hex)).filter(d => !!d)
+                const target = neighbors.sample() as Population
+                target.color = pop.color
+            }
+        }
+    }
+}
+
+@observer
+class SimulationView extends React.Component {
+    @observable screenWidth: number
+    @observable screenHeight: number
+
+    @computed get sim() { return new RingSpeciesSimulation() }
+    @computed get screenCenterX() { return this.screenWidth/2 }
+    @computed get screenCenterY() { return this.screenHeight/2 }
+    @computed get hexRadius() { return Math.round(Math.min(this.screenHeight, this.screenWidth)/(this.sim.mountainSize+this.sim.ringSize)/4) }
+
+    timeCounter = 0
+    @action.bound frame(deltaTime: number) {
+        this.timeCounter += deltaTime
+        const frameInterval = 10000
+        if (this.timeCounter > frameInterval) {
+            this.sim.frame()
+            this.timeCounter -= frameInterval
+        }
+        requestAnimationFrame(this.frame)
+    }
+
+    componentWillMount() {
+        this.screenWidth = window.innerWidth
+        this.screenHeight = window.innerHeight
+    }
+
+    componentDidMount() {
+        window.onresize = () => {
+            this.screenWidth = window.innerWidth
+            this.screenHeight = window.innerHeight
+        }
+        requestAnimationFrame(this.frame)
+    }
+
+    render() {
+        const {screenWidth, screenHeight, screenCenterX, screenCenterY, hexRadius, sim} = this
+
+        return <svg width={screenWidth} height={screenHeight}>
+            {sim.ringHexes.map(hex => {
+                const screenX = screenCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
+                const screenY = screenCenterY + hexRadius * 3/2 * hex.r
+                return <polygon points={hexagonPoints(screenX, screenY, hexRadius).join(" ")} fill={(sim.hexGrid.get(hex) as Population).color} stroke="#ccc"/>
+            })}
+        </svg>
+    }
 }
 
 declare var require: any
 window.homepageStart = function() {
-    //const PIXI = require('pixi.js')
-    const app = new PIXI.Application(window.innerWidth, window.innerHeight, { transparent: true })
-    document.body.appendChild(app.view)
-
-    const size = 10
-
-    const graphics = new PIXI.Graphics()
-    //graphics.beginFill(0)
-    //drawHexagon(graphics, 0, 0, size)
-    graphics.beginFill(0xFFFFFF)
-    drawHexagon(graphics, 0, 0, size)
-    graphics.endFill()
-    const hexTexture = app.renderer.generateTexture(graphics)
-
-    const cx = Math.round(app.renderer.width/2)
-    const cy = Math.round(app.renderer.height/2)
-    const container = new PIXI.Container()
-    app.stage.addChild(container)
-
-    app.renderer.roundPixels = true
-
-    const hexes = Hex.spiral(Hex.zero, 100)
-
-    let offset = 0
-    let timer = -1
-    let elapsed = 0
-    app.ticker.add(deltaTime => {
-        if (offset >= hexes.length)
-            return
-
-        timer += deltaTime
-        elapsed += deltaTime
-        const timeRequired = 1 * Math.pow(0.99, elapsed)
-
-        while (timer > timeRequired && offset < hexes.length-1) {
-            timer -= timeRequired
-
-            offset += 1
-            const hex = hexes[offset]
-            const screenX = cx + size * Math.sqrt(3) * (hex.q + hex.r/2)
-            const screenY = cy + size * 3/2 * hex.r
-            const hexSprite = new PIXI.Sprite(hexTexture)
-            hexSprite.x = screenX
-            hexSprite.y = screenY
-            hexSprite.tint = Math.random() * 0xFFFFFF
-            hexSprite.alpha = 0.5
-            container.addChild(hexSprite)
-        }
-
-        container.children.forEach(sprite => (sprite as PIXI.Sprite).tint = Math.random() * 0xFFFFFF)
-    })
+    ReactDOM.render(<SimulationView/>, document.body)
 }
 
 
