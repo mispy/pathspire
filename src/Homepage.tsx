@@ -6,7 +6,7 @@ import {observer} from 'mobx-react'
 
 import * as d3 from 'd3'
 import * as d3_chromatic from 'd3-scale-chromatic'
-import * as PIXI from 'pixi.js'
+
 declare global {
   interface Window {
     homepageStart: Function
@@ -111,6 +111,7 @@ class Population {
     hex: Hex
     @observable dist: number = 0
     @observable isReproducing: boolean = false
+    neighbors: Population[]
 
 
     @computed get color() {
@@ -127,8 +128,8 @@ class Population {
 }
 
 class RingSpeciesSimulation {
-    @computed get mountainSize() { return 10 }
-    @computed get ringSize() { return 5 }
+    @computed get mountainSize() { return 16 }
+    @computed get ringSize() { return 8 }
 
     @computed get ringHexes() {
         const {mountainSize, ringSize} = this
@@ -139,10 +140,16 @@ class RingSpeciesSimulation {
     constructor() {
         this.hexGrid = new HexGrid<Population>()
         this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Population(hex)))
+
+        this.populations.forEach(pop => {
+            const neighbors = _(pop.hex.neighbors).map(hex => this.hexGrid.get(hex)).filter(d => !!d).value()
+            pop.neighbors = neighbors as Population[]
+        })
     }
 
     @computed get populations(): Population[] {
-        return this.ringHexes.map(hex => this.hexGrid.get(hex) as Population)
+        const populations = this.ringHexes.map(hex => this.hexGrid.get(hex) as Population)
+        return _.sampleSize(populations, populations.length)
     }
 
 
@@ -153,8 +160,7 @@ class RingSpeciesSimulation {
             const willReproduce = pop.isReproducing
 
             if (willReproduce) {
-                const neighbors = _(pop.hex.neighbors).map(hex => this.hexGrid.get(hex)).filter(d => !!d)
-                const target = neighbors.sample() as Population
+                const target = _(pop.neighbors).sample() as Population
                 target.dist += 1
                 target.isReproducing = true
             }
@@ -171,13 +177,14 @@ class SimulationView extends React.Component<{ width: number, height: number }> 
 
     timeCounter = 0
     prevTime?: number
+    paused: boolean = false
     @action.bound frame(time: number) {
         const deltaTime = time - (this.prevTime||time)
         this.prevTime = time
 
-        const frameInterval = 30
+        const frameInterval = 20
         this.timeCounter += deltaTime
-        if (this.timeCounter > frameInterval) {
+        if (this.timeCounter > frameInterval && !this.paused) {
             this.sim.frame()
             this.timeCounter -= frameInterval
         }
@@ -187,6 +194,7 @@ class SimulationView extends React.Component<{ width: number, height: number }> 
 
     componentDidMount() {
         requestAnimationFrame(this.frame)
+        window.onkeydown = () => { this.paused = !this.paused }
     }
 
     @action.bound clickCell(hex: Hex) {        
@@ -213,8 +221,12 @@ class SimulationView extends React.Component<{ width: number, height: number }> 
 
 declare var require: any
 window.homepageStart = function() {
-    const container = document.querySelector("#simulation") as Element
-    ReactDOM.render(<SimulationView width={container.getBoundingClientRect().width} height={container.getBoundingClientRect().height} />, document.querySelector("#simulation"))
+    function render() {
+        ReactDOM.render(<SimulationView width={window.innerWidth} height={window.innerHeight} />, document.querySelector("#simulation"))
+    }
+
+    window.onresize = render
+    render()
 }
 
 
