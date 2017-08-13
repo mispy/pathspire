@@ -109,11 +109,20 @@ function hexagonPoints(cx: number, cy: number, size: number) {
 
 class Population {
     hex: Hex
-    @observable color: string
+    @observable dist: number = 0
+    @observable isReproducing: boolean = false
 
-    constructor(hex: Hex, color: string) {
+
+    @computed get color() {
+        if (!this.isReproducing)
+            return "#fff"
+        else {
+            return d3_chromatic.interpolateSpectral(this.dist/100)
+        }
+    }
+
+    constructor(hex: Hex) {
         this.hex = hex
-        this.color = color
     }
 }
 
@@ -129,7 +138,7 @@ class RingSpeciesSimulation {
     hexGrid: HexGrid<Population>
     constructor() {
         this.hexGrid = new HexGrid<Population>()
-        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Population(hex, Math.random() > 0.5 ? "#000" : "#fff")))
+        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Population(hex)))
     }
 
     @computed get populations(): Population[] {
@@ -140,59 +149,63 @@ class RingSpeciesSimulation {
     frame() {
         const hasChanged = new Map<string, boolean>()
         for (let pop of this.populations) {
-            const willReproduce = true
+            // XXX remove iteration bias
+            const willReproduce = pop.isReproducing
 
             if (willReproduce) {
                 const neighbors = _(pop.hex.neighbors).map(hex => this.hexGrid.get(hex)).filter(d => !!d)
                 const target = neighbors.sample() as Population
-                target.color = pop.color
+                target.dist += 1
+                target.isReproducing = true
             }
         }
     }
 }
 
 @observer
-class SimulationView extends React.Component {
-    @observable screenWidth: number
-    @observable screenHeight: number
-
+class SimulationView extends React.Component<{ width: number, height: number }> {
     @computed get sim() { return new RingSpeciesSimulation() }
-    @computed get screenCenterX() { return this.screenWidth/2 }
-    @computed get screenCenterY() { return this.screenHeight/2 }
-    @computed get hexRadius() { return Math.round(Math.min(this.screenHeight, this.screenWidth)/(this.sim.mountainSize+this.sim.ringSize)/4) }
+    @computed get screenCenterX() { return this.props.width/2 }
+    @computed get screenCenterY() { return this.props.height/2 }
+    @computed get hexRadius() { return Math.round(Math.min(this.props.height, this.props.width)/(this.sim.mountainSize+this.sim.ringSize)/4) }
 
     timeCounter = 0
-    @action.bound frame(deltaTime: number) {
+    prevTime?: number
+    @action.bound frame(time: number) {
+        const deltaTime = time - (this.prevTime||time)
+        this.prevTime = time
+
+        const frameInterval = 30
         this.timeCounter += deltaTime
-        const frameInterval = 10000
         if (this.timeCounter > frameInterval) {
             this.sim.frame()
             this.timeCounter -= frameInterval
         }
-        requestAnimationFrame(this.frame)
-    }
 
-    componentWillMount() {
-        this.screenWidth = window.innerWidth
-        this.screenHeight = window.innerHeight
+        requestAnimationFrame(this.frame)
     }
 
     componentDidMount() {
-        window.onresize = () => {
-            this.screenWidth = window.innerWidth
-            this.screenHeight = window.innerHeight
-        }
         requestAnimationFrame(this.frame)
     }
 
-    render() {
-        const {screenWidth, screenHeight, screenCenterX, screenCenterY, hexRadius, sim} = this
+    @action.bound clickCell(hex: Hex) {        
+        this.sim.populations.forEach(pop => {
+            pop.isReproducing = false
+            pop.dist = 0
+        })
+        const pop = this.sim.hexGrid.get(hex) as Population
+        pop.isReproducing = true
+    }
 
-        return <svg width={screenWidth} height={screenHeight}>
+    render() {
+        const {props, screenCenterX, screenCenterY, hexRadius, sim} = this
+
+        return <svg width={props.width} height={props.height}>
             {sim.ringHexes.map(hex => {
                 const screenX = screenCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
                 const screenY = screenCenterY + hexRadius * 3/2 * hex.r
-                return <polygon points={hexagonPoints(screenX, screenY, hexRadius).join(" ")} fill={(sim.hexGrid.get(hex) as Population).color} stroke="#ccc"/>
+                return <polygon onMouseDown={e => this.clickCell(hex)} points={hexagonPoints(screenX, screenY, hexRadius).join(" ")} fill={(sim.hexGrid.get(hex) as Population).color} stroke="#ccc"/>
             })}
         </svg>
     }
@@ -200,13 +213,18 @@ class SimulationView extends React.Component {
 
 declare var require: any
 window.homepageStart = function() {
-    ReactDOM.render(<SimulationView/>, document.body)
+    const container = document.querySelector("#simulation") as Element
+    ReactDOM.render(<SimulationView width={container.getBoundingClientRect().width} height={container.getBoundingClientRect().height} />, document.querySelector("#simulation"))
 }
 
 
 @observer
 export default class Homepage extends React.Component {
 	render() {
-        return <script async dangerouslySetInnerHTML={{__html: "window.homepageStart()"}}></script>
+        return <main>
+            <div id="simulation">
+                <script async dangerouslySetInnerHTML={{__html: "window.homepageStart()"}}></script>
+            </div>
+        </main>
 	}
 }
