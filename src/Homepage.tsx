@@ -6,6 +6,8 @@ import {observer} from 'mobx-react'
 
 import * as d3 from 'd3'
 import * as d3_chromatic from 'd3-scale-chromatic'
+declare const require: any
+const TinyQueue = require('tinyqueue')
 
 declare global {
   interface Window {
@@ -15,6 +17,25 @@ declare global {
 
 const BLANK = "#343434"
 const GREEN = "#3BC376"
+
+class PriorityQueue<T> {
+    queue: any
+    constructor() {
+        this.queue = new TinyQueue([], (a: any, b: any) => a.priority - b.priority)
+    }
+
+    push(value: T, priority: number) {
+        this.queue.push({ value, priority })
+    }
+
+    pop(): T {
+        return this.queue.pop().value
+    }
+
+    get length(): number {
+        return this.queue.length
+    }
+}
 
 class Hex {
     static directions = [
@@ -69,6 +90,10 @@ class Hex {
         return this.add(Hex.directions[index])
     }
 
+    equals(b: Hex) {
+        return this.key === b.key
+    }
+
     get neighbors() {
         return Hex.directions.map(hex => this.add(hex))
     }
@@ -111,18 +136,34 @@ function hexagonPoints(cx: number, cy: number, size: number) {
 }
 
 class Cell {
+    game: Game
     hex: Hex
-    @observable color = "#fff"
+    @observable color = BLANK
 
-    constructor(hex: Hex) {
+    constructor(game: Game, hex: Hex) {
+        this.game = game
         this.hex = hex
+    }
+
+    get neighbors(): Cell[] {
+        return this.hex.neighbors.map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
     }
 }
 
-// hexagons move towards center
-// match colors by drawing a single unbroken path
+// player is green tile
+// moves towards exit (white tile?)
+// red tile enemies
+// create blue tile barriers to block path of enemies
+
+interface Enemy {
+    hex: Hex
+}
 
 class Game {
+    @observable playerLocation: Hex = new Hex(-3, 6, -3)
+    @observable exitLocation: Hex = new Hex(3, -6, 3)
+    @observable enemies: Enemy[] = []
+
     @computed get ringSize() { return 8 }
 
     @computed get ringHexes() {
@@ -137,38 +178,67 @@ class Game {
     hexGrid: HexGrid<Cell>
     constructor() {
         this.hexGrid = new HexGrid<Cell>()
-        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(hex)))
+        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
 
-        const colors = [GREEN, '#E75070', '#EF8243', '#DA4D47']
-        this.cells.forEach(cell => {
-            cell.color = colors[Math.floor(Math.random()*colors.length)]
-        })
+        const numEnemies = 3
+        for (let i = 0; i < numEnemies; i++) {
+            this.enemies.push({ hex: (_.sample(this.cells) as Cell).hex })
+        }
+    }
+
+    path(start: Cell, goal: Cell): Cell[]|undefined {
+        const frontier = new PriorityQueue<Cell>()
+        frontier.push(start, 0)
+        const cameFrom: Map<Cell, Cell|undefined> = new Map()
+        const costSoFar: Map<Cell, number> = new Map()
+        cameFrom.set(start, undefined)
+        costSoFar.set(start, 0)
+
+        while (frontier.length > 0) {
+            const current = frontier.pop()
+
+            if (current === goal)
+                break;
+
+            current.neighbors.forEach(nextCell => {
+                const newCost = (costSoFar.get(current)||0) + 1
+                const prevCost = costSoFar.get(nextCell)
+                if (prevCost === undefined || newCost < prevCost) {
+                    costSoFar.set(nextCell, newCost)
+                    frontier.push(nextCell, newCost)
+                    cameFrom.set(nextCell, current)
+                }
+            })
+        }
+
+        if (!cameFrom.has(goal))
+            return undefined
+        else {
+            const path = [goal]
+            let current = goal
+            while (current !== start) {
+                current = cameFrom.get(current) as Cell
+                path.push(current)
+            }
+            path.reverse()
+            return path
+        }
     }
 
     frame() {
-        /*const hasChanged = new Map<string, boolean>()
-        for (let pop of this.populations) {
-            // XXX remove iteration bias
-            const willReproduce = pop.isReproducing
-
-            if (willReproduce) {
-                const target = _(pop.neighbors).sample() as Population
-                target.dist += 1
-                target.isReproducing = true
-            }
-        }*/
     }
 }
 
 @observer
-class SimulationView extends React.Component<{ width: number, height: number }> {
-    @computed get sim() { return new Game() }
+class GameView extends React.Component<{ width: number, height: number }> {
+    @computed get game() { return new Game() }
     @computed get screenCenterX() { return this.props.width/2 }
     @computed get screenCenterY() { return this.props.height/2 }
-    @computed get hexRadius() { return Math.round(Math.min(this.props.height, this.props.width)/(this.sim.ringSize)/4) }
+    @computed get hexRadius() { return Math.round(Math.min(this.props.height, this.props.width)/(this.game.ringSize)/4) }
 
     @observable isMouseDown: boolean = false
     @observable currentSelection: Cell[] = []
+    @observable pathTarget: Hex
 
     timeCounter = 0
     prevTime?: number
@@ -180,7 +250,7 @@ class SimulationView extends React.Component<{ width: number, height: number }> 
         const frameInterval = 20
         this.timeCounter += deltaTime
         if (this.timeCounter > frameInterval && !this.paused) {
-            this.sim.frame()
+            this.game.frame()
             this.timeCounter -= frameInterval
         }
 
@@ -193,12 +263,14 @@ class SimulationView extends React.Component<{ width: number, height: number }> 
     }
 
     @action.bound onMouseDown(hex: Hex) {
-        const targetCell = this.sim.hexGrid.get(hex)
-        this.currentSelection = [targetCell]
+        const targetCell = this.game.hexGrid.get(hex)
+        this.game.playerLocation = hex
+        console.log(hex)
     }
 
     @action.bound onMouseMove(hex: Hex) {
-        const targetCell = this.sim.hexGrid.get(hex)
+        const targetCell = this.game.hexGrid.get(hex)
+        this.pathTarget = hex
 
         if (this.currentSelection.length) {
             const initialCell = this.currentSelection[0]
@@ -215,30 +287,78 @@ class SimulationView extends React.Component<{ width: number, height: number }> 
 //        this.currentSelection = []
     }
 
-    @action.bound onMouseUp() {
+    @action.bound onMouseUp(hex: Hex) {
         
     }
 
+    hexToPolygon(hex: Hex): string {
+        const {screenCenterX, screenCenterY, hexRadius} = this
+        const screenX = screenCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
+        const screenY = screenCenterY + hexRadius * 3/2 * hex.r
+        return hexagonPoints(screenX, screenY, hexRadius).join(" ")
+    }
+
+    renderTerrain() {
+        const {game} = this
+
+        return game.cells.map(cell => {
+            const hex = cell.hex
+            const isSelected = this.currentSelection.indexOf(cell) !== -1
+            const isPlayer = hex.equals(game.playerLocation)
+
+            const points = this.hexToPolygon(hex)
+
+            return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={points} fill={(game.hexGrid.get(hex) as Cell).color} stroke={isSelected ? 'cyan' : "#000"} strokeWidth={3}/>
+        })
+    }
+
+    renderPlayer() {
+        const {game} = this
+        const points = this.hexToPolygon(game.playerLocation)
+        return <polygon points={points} fill="lightgreen"/>
+    }
+
+    renderExit() {
+        const points = this.hexToPolygon(this.game.exitLocation)
+        return <polygon points={points} fill="white"/>
+    }
+
+    renderEnemies() {
+        return this.game.enemies.map(enemy => {
+            const points = this.hexToPolygon(enemy.hex)
+            return <polygon points={points} fill="red"/>
+        })
+    }
+
+    renderPath() {
+        const {game} = this
+        const path = this.pathTarget && game.path(game.hexGrid.get(game.playerLocation), game.hexGrid.get(this.pathTarget))
+
+        if (path === undefined)
+            return
+
+        return path.map(cell => {
+            const points = this.hexToPolygon(cell.hex)
+            return <polygon points={points} fill="cyan"/>
+        })
+    }
+
     render() {
-        const {props, screenCenterX, screenCenterY, hexRadius, sim} = this
+        const {props, screenCenterX, screenCenterY, hexRadius, game} = this
 
         return <svg width={props.width} height={props.height}>
-            {sim.cells.map(cell => {
-                const hex = cell.hex
-                const screenX = screenCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
-                const screenY = screenCenterY + hexRadius * 3/2 * hex.r
-                const isSelected = this.currentSelection.indexOf(cell) !== -1
-
-                return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={hexagonPoints(screenX, screenY, hexRadius).join(" ")} fill={(sim.hexGrid.get(hex) as Cell).color} stroke={isSelected ? 'cyan' : "#000"} strokeWidth={3}/>
-            })}
+            {this.renderTerrain()}
+            {this.renderPlayer()}
+            {this.renderExit()}
+            {this.renderEnemies()}
+            {this.renderPath()}
         </svg>
     }
 }
 
-declare var require: any
 window.homepageStart = function() {
     function render() {
-        ReactDOM.render(<SimulationView width={window.innerWidth} height={window.innerHeight} />, document.querySelector("#simulation"))
+        ReactDOM.render(<GameView width={window.innerWidth} height={window.innerHeight} />, document.querySelector("#gameulation"))
     }
 
     window.onresize = render
@@ -250,7 +370,7 @@ window.homepageStart = function() {
 export default class Homepage extends React.Component {
 	render() {
         return <main>
-            <div id="simulation">
+            <div id="gameulation">
                 <script async dangerouslySetInnerHTML={{__html: "window.homepageStart()"}}></script>
             </div>
         </main>
