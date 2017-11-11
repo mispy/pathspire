@@ -13,6 +13,9 @@ declare global {
   }
 }
 
+const BLANK = "#343434"
+const GREEN = "#3BC376"
+
 class Hex {
     static directions = [
         new Hex(+1, -1, 0), new Hex(+1, 0, -1), new Hex(0, +1, -1),
@@ -82,8 +85,8 @@ class HexGrid<T> {
     }
     
 
-    get(hex: Hex) {
-        return this.cells.get(hex.key)
+    get(hex: Hex): T {
+        return this.cells.get(hex.key) as T
     }
 
     set(hex: Hex, value: T) {
@@ -107,54 +110,43 @@ function hexagonPoints(cx: number, cy: number, size: number) {
     return path
 }
 
-class Population {
+class Cell {
     hex: Hex
-    @observable dist: number = 0
-    @observable isReproducing: boolean = false
-    neighbors: Population[]
-
-
-    @computed get color() {
-        if (!this.isReproducing)
-            return "#fff"
-        else {
-            return d3_chromatic.interpolateSpectral(this.dist/100)
-        }
-    }
+    @observable color = "#fff"
 
     constructor(hex: Hex) {
         this.hex = hex
     }
 }
 
-class RingSpeciesSimulation {
-    @computed get mountainSize() { return 16 }
+// hexagons move towards center
+// match colors by drawing a single unbroken path
+
+class Game {
     @computed get ringSize() { return 8 }
 
     @computed get ringHexes() {
-        const {mountainSize, ringSize} = this
-        return Hex.rings(Hex.zero, mountainSize, mountainSize+ringSize)
+        const {ringSize} = this
+        return Hex.rings(Hex.zero, 0, ringSize)
     }
 
-    hexGrid: HexGrid<Population>
-    constructor() {
-        this.hexGrid = new HexGrid<Population>()
-        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Population(hex)))
+    @computed get cells(): Cell[] {
+        return this.ringHexes.map(hex => this.hexGrid.get(hex) as Cell)
+    }
 
-        this.populations.forEach(pop => {
-            const neighbors = _(pop.hex.neighbors).map(hex => this.hexGrid.get(hex)).filter(d => !!d).value()
-            pop.neighbors = neighbors as Population[]
+    hexGrid: HexGrid<Cell>
+    constructor() {
+        this.hexGrid = new HexGrid<Cell>()
+        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(hex)))
+
+        const colors = [GREEN, '#E75070', '#EF8243', '#DA4D47']
+        this.cells.forEach(cell => {
+            cell.color = colors[Math.floor(Math.random()*colors.length)]
         })
     }
 
-    @computed get populations(): Population[] {
-        const populations = this.ringHexes.map(hex => this.hexGrid.get(hex) as Population)
-        return _.sampleSize(populations, populations.length)
-    }
-
-
     frame() {
-        const hasChanged = new Map<string, boolean>()
+        /*const hasChanged = new Map<string, boolean>()
         for (let pop of this.populations) {
             // XXX remove iteration bias
             const willReproduce = pop.isReproducing
@@ -164,16 +156,19 @@ class RingSpeciesSimulation {
                 target.dist += 1
                 target.isReproducing = true
             }
-        }
+        }*/
     }
 }
 
 @observer
 class SimulationView extends React.Component<{ width: number, height: number }> {
-    @computed get sim() { return new RingSpeciesSimulation() }
+    @computed get sim() { return new Game() }
     @computed get screenCenterX() { return this.props.width/2 }
     @computed get screenCenterY() { return this.props.height/2 }
-    @computed get hexRadius() { return Math.round(Math.min(this.props.height, this.props.width)/(this.sim.mountainSize+this.sim.ringSize)/4) }
+    @computed get hexRadius() { return Math.round(Math.min(this.props.height, this.props.width)/(this.sim.ringSize)/4) }
+
+    @observable isMouseDown: boolean = false
+    @observable currentSelection: Cell[] = []
 
     timeCounter = 0
     prevTime?: number
@@ -197,23 +192,44 @@ class SimulationView extends React.Component<{ width: number, height: number }> 
         window.onkeydown = () => { this.paused = !this.paused }
     }
 
-    @action.bound clickCell(hex: Hex) {        
-        this.sim.populations.forEach(pop => {
-            pop.isReproducing = false
-            pop.dist = 0
-        })
-        const pop = this.sim.hexGrid.get(hex) as Population
-        pop.isReproducing = true
+    @action.bound onMouseDown(hex: Hex) {
+        const targetCell = this.sim.hexGrid.get(hex)
+        this.currentSelection = [targetCell]
+    }
+
+    @action.bound onMouseMove(hex: Hex) {
+        const targetCell = this.sim.hexGrid.get(hex)
+
+        if (this.currentSelection.length) {
+            const initialCell = this.currentSelection[0]
+
+            if (initialCell.hex.neighbors.some(hex => hex.key == targetCell.hex.key)) {
+                const color = this.currentSelection[0].color
+                this.currentSelection[0].color = targetCell.color
+                targetCell.color = color
+                this.currentSelection = []
+            }
+        }
+//        if (this.currentSelection.length >= 2)
+//            this.currentSelection.forEach(cell => cell.color = BLANK)
+//        this.currentSelection = []
+    }
+
+    @action.bound onMouseUp() {
+        
     }
 
     render() {
         const {props, screenCenterX, screenCenterY, hexRadius, sim} = this
 
         return <svg width={props.width} height={props.height}>
-            {sim.ringHexes.map(hex => {
+            {sim.cells.map(cell => {
+                const hex = cell.hex
                 const screenX = screenCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
                 const screenY = screenCenterY + hexRadius * 3/2 * hex.r
-                return <polygon onMouseDown={e => this.clickCell(hex)} points={hexagonPoints(screenX, screenY, hexRadius).join(" ")} fill={(sim.hexGrid.get(hex) as Population).color} stroke="#ccc"/>
+                const isSelected = this.currentSelection.indexOf(cell) !== -1
+
+                return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={hexagonPoints(screenX, screenY, hexRadius).join(" ")} fill={(sim.hexGrid.get(hex) as Cell).color} stroke={isSelected ? 'cyan' : "#000"} strokeWidth={3}/>
             })}
         </svg>
     }

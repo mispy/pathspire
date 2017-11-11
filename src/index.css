@@ -5,6 +5,7 @@ html, body {
 	margin: 0;
 	font-family: 'Helvetica', 'Arial', sans-serif;
 	color: #50585D;
+	background: #1A1A1A;
 }
 
 html {
@@ -22,4 +23,5 @@ main {
 
 #simulation polygon {
 	cursor: pointer;
+	box-shadow: 0 0 30px 10px rgba(243, 215, 116, 0), inset 0 0 0 1px rgba(255, 255, 255, 0);
 }
