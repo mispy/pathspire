@@ -180,6 +180,9 @@ class Game {
         this.hexGrid = new HexGrid<Cell>()
         this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
 
+        const barrierHexes = Hex.rings(Hex.zero, 0, 2)
+        barrierHexes.forEach(hex => this.hexGrid.get(hex).color = "orange")
+
         const numEnemies = 3
         for (let i = 0; i < numEnemies; i++) {
             this.enemies.push({ hex: (_.sample(this.cells) as Cell).hex })
@@ -201,6 +204,8 @@ class Game {
                 break;
 
             current.neighbors.forEach(nextCell => {
+                if (nextCell.color !== BLANK) return
+                
                 const newCost = (costSoFar.get(current)||0) + 1
                 const prevCost = costSoFar.get(nextCell)
                 if (prevCost === undefined || newCost < prevCost) {
@@ -218,6 +223,8 @@ class Game {
             let current = goal
             while (current !== start) {
                 current = cameFrom.get(current) as Cell
+                if (current === start)
+                    break;
                 path.push(current)
             }
             path.reverse()
@@ -308,7 +315,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
             const points = this.hexToPolygon(hex)
 
-            return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={points} fill={(game.hexGrid.get(hex) as Cell).color} stroke={isSelected ? 'cyan' : "#000"} strokeWidth={3}/>
+            return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={points} fill={(game.hexGrid.get(hex) as Cell).color} stroke={"#000"} strokeWidth={3}/>
         })
     }
 
@@ -339,7 +346,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
         return path.map(cell => {
             const points = this.hexToPolygon(cell.hex)
-            return <polygon points={points} fill="cyan"/>
+            return <polygon points={points} fill="yellow"/>
         })
     }
 
@@ -348,10 +355,10 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
         return <svg width={props.width} height={props.height}>
             {this.renderTerrain()}
+            {this.renderPath()}
             {this.renderPlayer()}
             {this.renderExit()}
             {this.renderEnemies()}
-            {this.renderPath()}
         </svg>
     }
 }
