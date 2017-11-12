@@ -1,22 +1,20 @@
-import * as _ from 'lodash'
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import {observable, computed, action} from 'mobx'
 import {observer} from 'mobx-react'
 
-import * as d3 from 'd3'
-import * as d3_chromatic from 'd3-scale-chromatic'
+function sample<T>(arr: T[]): T {
+    return arr[Math.floor(Math.random()*arr.length)]
+}
+
 declare const require: any
 const TinyQueue = require('tinyqueue')
 
-declare global {
-  interface Window {
-    homepageStart: Function
-  }
-}
+declare const window: any
 
 const BLANK = "#343434"
 const GREEN = "#3BC376"
+const BARRIER = "cyan"
 
 class PriorityQueue<T> {
     queue: any
@@ -65,6 +63,48 @@ class Hex {
             results.push(...Hex.ring(center, i))
         }
         return results
+    }
+
+    static distance(a: Hex, b: Hex) {
+        return (Math.abs(a.q-b.q) + Math.abs(a.r-b.r) + Math.abs(a.s-b.s))/2
+    }
+
+    static lineBetween(a: Hex, b: Hex) {
+        function lerp(a: number, b: number, t: number) {
+            return a + (b - a) * t
+        }
+
+        function cubeLerp(a: Hex, b: Hex, t: number) {
+            const x = lerp(a.q, b.q, t)
+            const y = lerp(a.r, b.r, t)
+            const z = lerp(a.s, b.s, t)
+
+            let rx = Math.round(x)
+            let ry = Math.round(y)
+            let rz = Math.round(z)
+
+            var x_diff = Math.abs(rx - x)
+            var y_diff = Math.abs(ry - y)
+            var z_diff = Math.abs(rz - z)
+        
+            if (x_diff > y_diff && x_diff > z_diff)
+                rx = -ry-rz
+            else if (y_diff > z_diff)
+                ry = -rx-rz
+            else
+                rz = -rx-ry
+        
+            return new Hex(rx, ry, rz)            
+        }
+
+        const distance = Hex.distance(a, b)
+        const line = []
+        for (let i = 0; i < distance; i++) {
+            line.push(cubeLerp(a, b, 1/distance * i))
+        }
+        line.push(b)
+
+        return line
     }
 
     readonly q: number
@@ -152,6 +192,10 @@ class Cell {
     circle(radius: number): Cell[] {
         return Hex.rings(this.hex, 0, radius).map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
     }
+
+    lineTo(b: Cell) {
+        return Hex.lineBetween(this.hex, b.hex).map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
+    }
 }
 
 // player is green tile
@@ -169,6 +213,7 @@ class Game {
     @observable numEnemies: number = 3
     @observable enemies: Enemy[] = []
     @observable numTeleports: number = 1
+    @observable level = 1
     @observable state: 'game'|'success'|'failure' = 'game'
 
     @computed get playerCell(): Cell {
@@ -188,12 +233,12 @@ class Game {
 
     hexGrid: HexGrid<Cell>
     constructor() {
-        this.hexGrid = new HexGrid<Cell>()
-        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
         this.setupBoard()
     }
 
     @action.bound setupBoard() {
+        this.hexGrid = new HexGrid<Cell>()
+        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
         this.playerLocation = new Hex(-3, 6, -3)
         this.exitLocation = new Hex(3, -6, 3)
         const barrierHexes = Hex.rings(Hex.zero, 0, 2)
@@ -201,15 +246,15 @@ class Game {
 
         this.enemies = []
         for (let i = 0; i < this.numEnemies; i++) {
-            this.enemies.push({ hex: (_.sample(this.cells) as Cell).hex })
+            this.enemies.push({ hex: (sample(this.cells) as Cell).hex })
         }
     }
 
     @action.bound nextLevel() {
         if (this.state == 'success')
-            this.numEnemies += 1
+            this.level += 1
         else
-            this.numEnemies = 3
+            this.level = 1
         this.numTeleports = 1
         this.state = 'game'
         this.setupBoard()
@@ -256,6 +301,12 @@ class Game {
         }
     }
 
+    @action.bound placeBarrier(start: Cell, end: Cell) {
+        start.lineTo(end).forEach(cell => {
+            cell.color = BARRIER
+        })
+    }
+
     endTurn() {
         if (this.playerLocation.equals(this.exitLocation)) {
             this.state = 'success'
@@ -277,7 +328,7 @@ class Game {
 @observer
 class GameView extends React.Component<{ width: number, height: number }> {
     @computed get game() { return new Game() }
-    @computed get hexRadius() { return Math.round(Math.min(this.props.height, this.props.width)/(this.game.ringSize)/4) }
+    @computed get hexRadius() { return Math.round(Math.min(this.props.width-50, this.props.height-100)/((this.game.ringSize+5)*2)) }
     @computed get boardWidth() { return this.hexRadius*(this.game.ringSize+5)*2 }
     @computed get boardHeight() { return this.hexRadius*(this.game.ringSize+5)*2 }
     @computed get boardCenterX() { return this.boardWidth/2 }
@@ -287,6 +338,11 @@ class GameView extends React.Component<{ width: number, height: number }> {
     @observable isTargetTeleport: boolean = false
     @observable currentSelection: Cell[] = []
     @observable pathTarget: Hex
+
+    @observable isTargetBarrier: boolean = false
+    @observable barrierStart?: Cell
+
+    @observable cursor: Cell
 
     timeCounter = 0
     prevTime?: number
@@ -305,20 +361,24 @@ class GameView extends React.Component<{ width: number, height: number }> {
         requestAnimationFrame(this.frame)
     }
 
-    componentDidMount() {
-        //requestAnimationFrame(this.frame)
-        //window.onkeydown = () => { this.paused = !this.paused }
-    }
-
     @action.bound onMouseDown(hex: Hex) {
+        this.isMouseDown = true
         const targetCell = this.game.hexGrid.get(hex)
 
         if (this.isTargetTeleport) {
-            const cells = this.game.playerCell.circle(4)
+            const cells = this.game.playerCell.circle(6)
             if (cells.indexOf(targetCell) !== -1) {
                 this.game.playerLocation = targetCell.hex
                 this.isTargetTeleport = false
                 this.game.numTeleports -= 1
+            }
+        } else if (this.isTargetBarrier) {
+            if (this.barrierStart === undefined)
+                this.barrierStart = this.cursor
+            else {
+                this.game.placeBarrier(this.barrierStart, this.cursor)
+                this.toggleTargetBarrier()
+                this.game.endTurn()
             }
         } else {
             const path = this.game.pathBetween(this.game.playerCell, targetCell)
@@ -331,25 +391,15 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
     @action.bound onMouseMove(hex: Hex) {
         const targetCell = this.game.hexGrid.get(hex)
-        this.pathTarget = hex
 
-        if (this.currentSelection.length) {
-            const initialCell = this.currentSelection[0]
-
-            if (initialCell.hex.neighbors.some(hex => hex.key == targetCell.hex.key)) {
-                const color = this.currentSelection[0].color
-                this.currentSelection[0].color = targetCell.color
-                targetCell.color = color
-                this.currentSelection = []
-            }
+        this.cursor = targetCell
+        if (this.isTargetBarrier) {
+//            this.barrierStart = targetCell
         }
-//        if (this.currentSelection.length >= 2)
-//            this.currentSelection.forEach(cell => cell.color = BLANK)
-//        this.currentSelection = []
     }
 
     @action.bound onMouseUp(hex: Hex) {
-        
+        this.isMouseDown = false
     }
 
     hexToPolygon(hex: Hex): string {
@@ -369,7 +419,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
             const points = this.hexToPolygon(hex)
 
-            return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={points} fill={(game.hexGrid.get(hex) as Cell).color} stroke={"#000"} strokeWidth={3}/>
+            return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={points} fill={(game.hexGrid.get(hex) as Cell).color} stroke={"#000"} strokeWidth={this.hexRadius/8}/>
         })
     }
 
@@ -405,7 +455,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     renderTargetTeleport() {
-        const cells = this.game.playerCell.circle(4)
+        const cells = this.game.playerCell.circle(6)
 
         return cells.map(cell => {
             const points = this.hexToPolygon(cell.hex)
@@ -422,7 +472,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
                     <button onClick={e => game.nextLevel()}>Continue</button>
                 </div>
             </div>
-        } else if (game.state == 'failure') {
+        } else {
             return <div id="game" className="failure">
                 <h2>You were captured...</h2>
                 <div id="abilities">
@@ -432,23 +482,44 @@ class GameView extends React.Component<{ width: number, height: number }> {
         }
     }
 
+    renderTargetBarrier() {
+        if (!this.cursor) return
+        const barrierCells = this.barrierStart ? this.barrierStart.lineTo(this.cursor) : [this.cursor]
+        return barrierCells.map(cell => {
+            const points = this.hexToPolygon(cell.hex)
+            const hex = cell.hex
+            return <polygon points={points} fill="cyan" opacity={0.5} onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)}/>            
+        })
+    }
+
+    @action.bound toggleTargetBarrier() {
+        this.barrierStart = undefined
+        this.isTargetBarrier = !this.isTargetBarrier
+    }
+
     render() {
         const {props, boardWidth, boardHeight, boardCenterX, boardCenterY, hexRadius, game} = this
+
+        window.game = game
+        window.gameView = this
 
         if (game.state !== 'game') {
             return this.renderEndState()
         }
 
         return <div id="game">
+            <h2>Floor {game.level}</h2>
             <svg width={boardWidth} height={boardHeight}>
                 {this.renderTerrain()}
                 {this.renderPlayer()}
                 {this.renderExit()}
                 {this.renderEnemies()}
                 {this.isTargetTeleport && this.renderTargetTeleport()}
+                {this.isTargetBarrier && this.renderTargetBarrier()}
             </svg>
             <div id="abilities">
-                <button onClick={e => this.isTargetTeleport = true} disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
+                <button onClick={e => this.toggleTargetBarrier() }>Barrier</button>
+                <button onClick={e => this.isTargetTeleport = !this.isTargetTeleport} disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
             </div>
         </div>
     }
