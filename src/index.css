@@ -28,3 +28,13 @@ main, #game {
 	background: none;
 	-webkit-appearance: none;
 }
+
+#game.success {
+	color: lightgreen;
+	align-items: center;
+}
+
+#game.failure {
+	color: red;
+	align-items: center;
+}

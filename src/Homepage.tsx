@@ -164,10 +164,12 @@ interface Enemy {
 }
 
 class Game {
-    @observable playerLocation: Hex = new Hex(-3, 6, -3)
-    @observable exitLocation: Hex = new Hex(3, -6, 3)
+    @observable playerLocation: Hex
+    @observable exitLocation: Hex
+    @observable numEnemies: number = 3
     @observable enemies: Enemy[] = []
     @observable numTeleports: number = 1
+    @observable state: 'game'|'success'|'failure' = 'game'
 
     @computed get playerCell(): Cell {
         return this.hexGrid.get(this.playerLocation)
@@ -188,14 +190,29 @@ class Game {
     constructor() {
         this.hexGrid = new HexGrid<Cell>()
         this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
+        this.setupBoard()
+    }
 
+    @action.bound setupBoard() {
+        this.playerLocation = new Hex(-3, 6, -3)
+        this.exitLocation = new Hex(3, -6, 3)
         const barrierHexes = Hex.rings(Hex.zero, 0, 2)
         barrierHexes.forEach(hex => this.hexGrid.get(hex).color = "orange")
 
-        const numEnemies = 3
-        for (let i = 0; i < numEnemies; i++) {
+        this.enemies = []
+        for (let i = 0; i < this.numEnemies; i++) {
             this.enemies.push({ hex: (_.sample(this.cells) as Cell).hex })
         }
+    }
+
+    @action.bound nextLevel() {
+        if (this.state == 'success')
+            this.numEnemies += 1
+        else
+            this.numEnemies = 3
+        this.numTeleports = 1
+        this.state = 'game'
+        this.setupBoard()
     }
 
     pathBetween(start: Cell, goal: Cell): Cell[]|undefined {
@@ -240,10 +257,19 @@ class Game {
     }
 
     endTurn() {
+        if (this.playerLocation.equals(this.exitLocation)) {
+            this.state = 'success'
+            return
+        }
+
         this.enemies.forEach(enemy => {
             const path = this.pathBetween(this.hexGrid.get(enemy.hex), this.hexGrid.get(this.playerLocation))
             if (path)
                 enemy.hex = path[0].hex
+
+            if (enemy.hex.equals(this.playerLocation)) {
+                this.state = 'failure'
+            }
         })
     }
 }
@@ -355,7 +381,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
     renderExit() {
         const points = this.hexToPolygon(this.game.exitLocation)
-        return <polygon points={points} fill="white"/>
+        return <polygon points={points} fill="white" onMouseDown={e => this.onMouseDown(this.game.exitLocation)}/>
     }
 
     renderEnemies() {
@@ -387,8 +413,31 @@ class GameView extends React.Component<{ width: number, height: number }> {
         })
     }
 
+    renderEndState() {
+        const {game} = this
+        if (game.state == 'success') {
+            return <div id="game" className="success">
+                <h2>Success!</h2>
+                <div id="abilities">
+                    <button onClick={e => game.nextLevel()}>Continue</button>
+                </div>
+            </div>
+        } else if (game.state == 'failure') {
+            return <div id="game" className="failure">
+                <h2>You were captured...</h2>
+                <div id="abilities">
+                    <button onClick={e => game.nextLevel()}>Continue</button>
+                </div>
+            </div>
+        }
+    }
+
     render() {
         const {props, boardWidth, boardHeight, boardCenterX, boardCenterY, hexRadius, game} = this
+
+        if (game.state !== 'game') {
+            return this.renderEndState()
+        }
 
         return <div id="game">
             <svg width={boardWidth} height={boardHeight}>
