@@ -10,9 +10,12 @@ const TinyQueue = require('tinyqueue')
 
 declare const window: any
 
-const BLANK = "#343434"
-const GREEN = "lightgreen"
-const BARRIER = "cyan"
+const COLOR_EMPTY = "#343434"
+const COLOR_PLAYER = "lightgreen"
+const COLOR_BARRIER = "cyan"
+const COLOR_TELEPORT = "yellow"
+
+const TELEPORT_RANGE = 7
 
 class PriorityQueue<T> {
     queue: any
@@ -175,7 +178,7 @@ function hexagonPoints(cx: number, cy: number, size: number) {
 class Cell {
     game: Game
     hex: Hex
-    @observable color = BLANK
+    @observable color = COLOR_EMPTY
 
     constructor(game: Game, hex: Hex) {
         this.game = game
@@ -187,7 +190,7 @@ class Cell {
     }
 
     get isPathable(): boolean {
-        return this.color === BLANK
+        return this.color === COLOR_EMPTY
     }
 
     get isEmpty(): boolean {
@@ -226,6 +229,7 @@ interface Enemy {
 class Game {
     @observable playerCell: Cell
     @observable exitCell: Cell
+    @observable teleportCrystal?: Cell
     @observable enemies: Enemy[] = []
     @observable numTeleports: number = 1
     @observable level = 1
@@ -265,6 +269,7 @@ class Game {
         let spawnableCells = this.cells.filter(cell => cell.isEmpty && cell !== this.exitCell && playerNeighbors.indexOf(cell) === -1)
         spawnableCells = sampleSize(spawnableCells, spawnableCells.length)
 
+        this.teleportCrystal = spawnableCells.pop()
         for (let i = 0; i < this.numEnemies; i++) {
             const cell = spawnableCells.pop()
             if (cell !== undefined)
@@ -277,7 +282,6 @@ class Game {
             this.level += 1
         else
             this.level = 1
-        this.numTeleports = 1
         this.state = 'game'
         this.setupBoard()
     }
@@ -325,11 +329,16 @@ class Game {
 
     @action.bound placeBarrier(start: Cell, end: Cell) {
         start.lineTo(end).forEach(cell => {
-            cell.color = BARRIER
+            cell.color = COLOR_BARRIER
         })
     }
 
     endTurn() {
+        if (this.playerCell === this.teleportCrystal) {
+            this.numTeleports += 1
+            this.teleportCrystal = undefined
+        }
+
         if (this.playerCell === this.exitCell) {
             this.state = 'success'
             return
@@ -400,7 +409,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
         this.isMouseDown = true
 
         if (this.selectedAbility === 'teleport') {
-            const cells = this.game.playerCell.circle(6)
+            const cells = this.game.playerCell.circle(TELEPORT_RANGE)
             if (cells.indexOf(cell) !== -1) {
                 this.game.playerCell = cell
                 this.selectedAbility = undefined
@@ -450,7 +459,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     renderPlayer() {
-        return <Tile fill={GREEN} cell={this.game.playerCell} view={this}/>
+        return <Tile fill={COLOR_PLAYER} cell={this.game.playerCell} view={this}/>
     }
 
     renderExit() {
@@ -464,10 +473,10 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     renderTargetTeleport() {
-        const cells = this.game.playerCell.circle(6).filter(cell => cell.isEmpty)
+        const cells = this.game.playerCell.circle(TELEPORT_RANGE).filter(cell => cell.isEmpty)
 
         return cells.map(cell => {
-            return <Tile fill={cell === this.cursor ? GREEN : "yellow"} opacity={cell === this.cursor ? 0.8 : 0.5} cell={cell} view={this}/>
+            return <Tile fill={cell === this.cursor ? COLOR_PLAYER : "yellow"} opacity={cell === this.cursor ? 0.8 : 0.5} cell={cell} view={this}/>
         })
     }
 
@@ -505,13 +514,8 @@ class GameView extends React.Component<{ width: number, height: number }> {
         })
     }
 
-    @action.bound toggleSelectBarrier() {
-        this.selectedAbility = this.selectedAbility === 'barrier' ? undefined : 'barrier'
-        this.barrierStart = undefined
-    }
-
-    @action.bound toggleSelectTeleport() {
-        this.selectedAbility = this.selectedAbility === 'teleport' ? undefined : 'teleport'
+    renderCrystal() {
+        return this.game.teleportCrystal && <Tile fill={COLOR_TELEPORT} cell={this.game.teleportCrystal} view={this}/>
     }
 
     renderHoverInfo() {
@@ -523,14 +527,23 @@ class GameView extends React.Component<{ width: number, height: number }> {
                     <Tile fill="red" opacity={0.5} cell={cell} view={this}/>                    
                 )
             }
-        } else if (this.game.exitCell === this.cursor) {
+        } else if (this.cursor == this.game.exitCell || this.cursor == this.game.teleportCrystal) {
             const path = this.game.playerCell.pathTo(this.cursor)
             if (path) {
                 return path.map(cell => 
-                    <Tile fill={GREEN} opacity={0.5} cell={cell} view={this}/>
+                    <Tile fill={COLOR_PLAYER} opacity={0.5} cell={cell} view={this}/>
                 )
             }
         }
+    }
+
+    @action.bound toggleSelectBarrier() {
+        this.selectedAbility = this.selectedAbility === 'barrier' ? undefined : 'barrier'
+        this.barrierStart = undefined
+    }
+
+    @action.bound toggleSelectTeleport() {
+        this.selectedAbility = this.selectedAbility === 'teleport' ? undefined : 'teleport'
     }
 
     render() {
@@ -549,8 +562,9 @@ class GameView extends React.Component<{ width: number, height: number }> {
                 {this.renderTerrain()}
                 {this.renderPlayer()}
                 {this.renderExit()}
+                {this.renderCrystal()}
                 {this.renderEnemies()}
-                {this.renderHoverInfo()}
+                {this.selectedAbility === undefined && this.renderHoverInfo()}
                 {this.selectedAbility === 'barrier' && this.renderTargetBarrier()}
                 {this.selectedAbility === 'teleport' && this.renderTargetTeleport()}
             </svg>
