@@ -148,6 +148,10 @@ class Cell {
     get neighbors(): Cell[] {
         return this.hex.neighbors.map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
     }
+
+    circle(radius: number): Cell[] {
+        return Hex.rings(this.hex, 0, radius).map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
+    }
 }
 
 // player is green tile
@@ -163,6 +167,11 @@ class Game {
     @observable playerLocation: Hex = new Hex(-3, 6, -3)
     @observable exitLocation: Hex = new Hex(3, -6, 3)
     @observable enemies: Enemy[] = []
+    @observable numTeleports: number = 1
+
+    @computed get playerCell(): Cell {
+        return this.hexGrid.get(this.playerLocation)
+    }
 
     @computed get ringSize() { return 8 }
 
@@ -189,7 +198,7 @@ class Game {
         }
     }
 
-    path(start: Cell, goal: Cell): Cell[]|undefined {
+    pathBetween(start: Cell, goal: Cell): Cell[]|undefined {
         const frontier = new PriorityQueue<Cell>()
         frontier.push(start, 0)
         const cameFrom: Map<Cell, Cell|undefined> = new Map()
@@ -205,7 +214,7 @@ class Game {
 
             current.neighbors.forEach(nextCell => {
                 if (nextCell.color !== BLANK) return
-                
+
                 const newCost = (costSoFar.get(current)||0) + 1
                 const prevCost = costSoFar.get(nextCell)
                 if (prevCost === undefined || newCost < prevCost) {
@@ -219,31 +228,37 @@ class Game {
         if (!cameFrom.has(goal))
             return undefined
         else {
-            const path = [goal]
+            const path = []
             let current = goal
-            while (current !== start) {
-                current = cameFrom.get(current) as Cell
-                if (current === start)
-                    break;
+            while (current != start) {
                 path.push(current)
+                current = cameFrom.get(current) as Cell
             }
             path.reverse()
             return path
         }
     }
 
-    frame() {
+    endTurn() {
+        this.enemies.forEach(enemy => {
+            const path = this.pathBetween(this.hexGrid.get(enemy.hex), this.hexGrid.get(this.playerLocation))
+            if (path)
+                enemy.hex = path[0].hex
+        })
     }
 }
 
 @observer
 class GameView extends React.Component<{ width: number, height: number }> {
     @computed get game() { return new Game() }
-    @computed get screenCenterX() { return this.props.width/2 }
-    @computed get screenCenterY() { return this.props.height/2 }
     @computed get hexRadius() { return Math.round(Math.min(this.props.height, this.props.width)/(this.game.ringSize)/4) }
+    @computed get boardWidth() { return this.hexRadius*(this.game.ringSize+5)*2 }
+    @computed get boardHeight() { return this.hexRadius*(this.game.ringSize+5)*2 }
+    @computed get boardCenterX() { return this.boardWidth/2 }
+    @computed get boardCenterY() { return this.boardHeight/2 }
 
     @observable isMouseDown: boolean = false
+    @observable isTargetTeleport: boolean = false
     @observable currentSelection: Cell[] = []
     @observable pathTarget: Hex
 
@@ -254,25 +269,38 @@ class GameView extends React.Component<{ width: number, height: number }> {
         const deltaTime = time - (this.prevTime||time)
         this.prevTime = time
 
-        const frameInterval = 20
+        /*const frameInterval = 20
         this.timeCounter += deltaTime
         if (this.timeCounter > frameInterval && !this.paused) {
             this.game.frame()
             this.timeCounter -= frameInterval
-        }
+        }*/
 
         requestAnimationFrame(this.frame)
     }
 
     componentDidMount() {
-        requestAnimationFrame(this.frame)
-        window.onkeydown = () => { this.paused = !this.paused }
+        //requestAnimationFrame(this.frame)
+        //window.onkeydown = () => { this.paused = !this.paused }
     }
 
     @action.bound onMouseDown(hex: Hex) {
         const targetCell = this.game.hexGrid.get(hex)
-        this.game.playerLocation = hex
-        console.log(hex)
+
+        if (this.isTargetTeleport) {
+            const cells = this.game.playerCell.circle(4)
+            if (cells.indexOf(targetCell) !== -1) {
+                this.game.playerLocation = targetCell.hex
+                this.isTargetTeleport = false
+                this.game.numTeleports -= 1
+            }
+        } else {
+            const path = this.game.pathBetween(this.game.playerCell, targetCell)
+            if (path) {
+                this.game.playerLocation = path[0].hex
+                this.game.endTurn()
+            }    
+        }
     }
 
     @action.bound onMouseMove(hex: Hex) {
@@ -299,9 +327,9 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     hexToPolygon(hex: Hex): string {
-        const {screenCenterX, screenCenterY, hexRadius} = this
-        const screenX = screenCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
-        const screenY = screenCenterY + hexRadius * 3/2 * hex.r
+        const {boardCenterX, boardCenterY, hexRadius} = this
+        const screenX = boardCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
+        const screenY = boardCenterY + hexRadius * 3/2 * hex.r
         return hexagonPoints(screenX, screenY, hexRadius).join(" ")
     }
 
@@ -339,7 +367,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
     renderPath() {
         const {game} = this
-        const path = this.pathTarget && game.path(game.hexGrid.get(game.playerLocation), game.hexGrid.get(this.pathTarget))
+        const path = this.pathTarget && game.pathBetween(game.hexGrid.get(game.playerLocation), game.hexGrid.get(this.pathTarget))
 
         if (path === undefined)
             return
@@ -350,22 +378,36 @@ class GameView extends React.Component<{ width: number, height: number }> {
         })
     }
 
-    render() {
-        const {props, screenCenterX, screenCenterY, hexRadius, game} = this
+    renderTargetTeleport() {
+        const cells = this.game.playerCell.circle(4)
 
-        return <svg width={props.width} height={props.height}>
-            {this.renderTerrain()}
-            {this.renderPath()}
-            {this.renderPlayer()}
-            {this.renderExit()}
-            {this.renderEnemies()}
-        </svg>
+        return cells.map(cell => {
+            const points = this.hexToPolygon(cell.hex)
+            return <polygon points={points} fill="yellow" opacity={0.5} onMouseDown={e => this.onMouseDown(cell.hex)}/>
+        })
+    }
+
+    render() {
+        const {props, boardWidth, boardHeight, boardCenterX, boardCenterY, hexRadius, game} = this
+
+        return <div id="game">
+            <svg width={boardWidth} height={boardHeight}>
+                {this.renderTerrain()}
+                {this.renderPlayer()}
+                {this.renderExit()}
+                {this.renderEnemies()}
+                {this.isTargetTeleport && this.renderTargetTeleport()}
+            </svg>
+            <div id="abilities">
+                <button onClick={e => this.isTargetTeleport = true} disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
+            </div>
+        </div>
     }
 }
 
 window.homepageStart = function() {
     function render() {
-        ReactDOM.render(<GameView width={window.innerWidth} height={window.innerHeight} />, document.querySelector("#gameulation"))
+        ReactDOM.render(<GameView width={window.innerWidth} height={window.innerHeight} />, document.querySelector("main"))
     }
 
     window.onresize = render
@@ -376,10 +418,8 @@ window.homepageStart = function() {
 @observer
 export default class Homepage extends React.Component {
 	render() {
-        return <main>
-            <div id="gameulation">
-                <script async dangerouslySetInnerHTML={{__html: "window.homepageStart()"}}></script>
-            </div>
+        return <main> 
+            <script async dangerouslySetInnerHTML={{__html: "window.homepageStart()"}}></script>
         </main>
 	}
 }
