@@ -1,4 +1,5 @@
 @import 'normalize.css';
+button:focus {outline:0;}
 
 html, body {
 	height: 100%;
@@ -22,9 +23,14 @@ main, #game {
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
+	user-select: none;
 }
 
-#game:not(.success):not(.failure) h2 {
+#game polygon {
+	cursor: pointer;
+}
+
+#game:not(.success):not(.failure):not(.stuck) h2 {
 	margin: 0;
 	color: white;
 }
@@ -34,14 +40,34 @@ main, #game {
 	background: none;
 	-webkit-appearance: none;
 	margin-right: 12px;
+	cursor: pointer;
+}
+
+#abilities button:disabled {
+	color: grey;
+	border-color: grey;
+}
+
+#abilities button.barrier.active {
+	background: cyan;
+	color: #333;
+	border-color: cyan;
+}
+
+#abilities button.teleport.active {
+	background: yellow;
+	color: #333;
+	border-color: yellow;
 }
 
 #game.success {
 	color: lightgreen;
-	align-items: center;
 }
 
 #game.failure {
 	color: red;
-	align-items: center;
+}
+
+#game.stuck {
+	color: orange;
 }

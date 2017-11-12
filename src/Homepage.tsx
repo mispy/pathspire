@@ -2,10 +2,8 @@ import * as React from 'react'
 import * as ReactDOM from 'react-dom'
 import {observable, computed, action} from 'mobx'
 import {observer} from 'mobx-react'
-
-function sample<T>(arr: T[]): T {
-    return arr[Math.floor(Math.random()*arr.length)]
-}
+import sample from 'lodash-es/sample'
+import sampleSize from 'lodash-es/sampleSize'
 
 declare const require: any
 const TinyQueue = require('tinyqueue')
@@ -13,7 +11,7 @@ const TinyQueue = require('tinyqueue')
 declare const window: any
 
 const BLANK = "#343434"
-const GREEN = "#3BC376"
+const GREEN = "lightgreen"
 const BARRIER = "cyan"
 
 class PriorityQueue<T> {
@@ -147,8 +145,7 @@ class HexGrid<T> {
     @observable cells: Map<string, T> = new Map()
 
     constructor() {        
-    }
-    
+    }    
 
     get(hex: Hex): T {
         return this.cells.get(hex.key) as T
@@ -189,12 +186,31 @@ class Cell {
         return this.hex.neighbors.map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
     }
 
+    get isPathable(): boolean {
+        return this.color === BLANK
+    }
+
+    get isEmpty(): boolean {
+        return this.isPathable && this !== this.game.playerCell && !this.game.enemies.some(enemy => enemy.cell === this)
+    }
+
     circle(radius: number): Cell[] {
         return Hex.rings(this.hex, 0, radius).map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
     }
 
     lineTo(b: Cell) {
-        return Hex.lineBetween(this.hex, b.hex).map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
+        const cells = []
+        for (let hex of Hex.lineBetween(this.hex, b.hex)) {
+            const cell = this.game.hexGrid.get(hex)
+            if (cell && cell.isPathable) {
+                cells.push(cell)
+            } else break;
+        }
+        return cells
+    }
+
+    pathTo(b: Cell) {
+        return this.game.pathBetween(this, b)
     }
 }
 
@@ -204,27 +220,19 @@ class Cell {
 // create blue tile barriers to block path of enemies
 
 interface Enemy {
-    hex: Hex
+    cell: Cell
 }
 
 class Game {
-    @observable playerLocation: Hex
-    @observable exitLocation: Hex
+    @observable playerCell: Cell
+    @observable exitCell: Cell
     @observable enemies: Enemy[] = []
     @observable numTeleports: number = 1
     @observable level = 1
-    @observable state: 'game'|'success'|'failure' = 'game'
+    @observable state: 'game'|'success'|'failure'|'stuck' = 'game'
 
     @computed get numEnemies(): number {
         return this.level
-    }
-
-    @computed get playerCell(): Cell {
-        return this.hexGrid.get(this.playerLocation)
-    }
-
-    @computed get exitCell(): Cell {
-        return this.hexGrid.get(this.exitLocation)
     }
 
     @computed get ringSize() { return 8 }
@@ -246,18 +254,21 @@ class Game {
     @action.bound setupBoard() {
         this.hexGrid = new HexGrid<Cell>()
         this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
-        this.playerLocation = new Hex(-3, 6, -3)
-        this.exitLocation = new Hex(3, -6, 3)
+        this.exitCell = this.hexGrid.get(new Hex(3, -6, 3))
+        this.playerCell = this.hexGrid.get(new Hex(-3, 6, -3))
+        this.enemies = []
+
         const barrierHexes = Hex.rings(Hex.zero, 0, 2)
         barrierHexes.forEach(hex => this.hexGrid.get(hex).color = "orange")
 
-
         const playerNeighbors = this.playerCell.neighbors
-        const spawnableCells = this.cells.filter(cell => cell.color === BLANK && cell !== this.playerCell && cell !== this.exitCell && playerNeighbors.indexOf(cell) === -1)
+        let spawnableCells = this.cells.filter(cell => cell.isEmpty && cell !== this.exitCell && playerNeighbors.indexOf(cell) === -1)
+        spawnableCells = sampleSize(spawnableCells, spawnableCells.length)
 
-        this.enemies = []
         for (let i = 0; i < this.numEnemies; i++) {
-            this.enemies.push({ hex: (sample(spawnableCells) as Cell).hex })
+            const cell = spawnableCells.pop()
+            if (cell !== undefined)
+                this.enemies.push({ cell: cell })
         }
     }
 
@@ -286,7 +297,7 @@ class Game {
                 break;
 
             current.neighbors.forEach(nextCell => {
-                if (nextCell.color !== BLANK) return
+                if (nextCell !== start && nextCell !== goal && !nextCell.isPathable) return
 
                 const newCost = (costSoFar.get(current)||0) + 1
                 const prevCost = costSoFar.get(nextCell)
@@ -319,20 +330,33 @@ class Game {
     }
 
     endTurn() {
-        if (this.playerLocation.equals(this.exitLocation)) {
+        if (this.playerCell === this.exitCell) {
             this.state = 'success'
             return
         }
 
-        this.enemies.forEach(enemy => {
-            const path = this.pathBetween(this.hexGrid.get(enemy.hex), this.hexGrid.get(this.playerLocation))
-            if (path)
-                enemy.hex = path[0].hex
+        for (let enemy of this.enemies) {
+            const path = this.pathBetween(enemy.cell, this.playerCell)
+            if (path && (path[0] === this.playerCell || path[0].isEmpty))
+                enemy.cell = path[0]
 
-            if (enemy.hex.equals(this.playerLocation)) {
+            if (enemy.cell === this.playerCell) {
                 this.state = 'failure'
+                return
             }
-        })
+        }
+
+        if (this.numTeleports === 0 && this.pathBetween(this.playerCell, this.exitCell) === undefined) {
+            this.state = 'stuck'
+            return
+        }
+    }
+}
+
+class Tile extends React.Component<{ fill: string, cell: Cell, view: GameView, opacity?: number, stroke?: string, strokeWidth?: number }> {
+    render() {
+        const {fill, cell, view, ...rest} = this.props
+        return <polygon points={view.hexToPolygon(cell.hex)} fill={fill} onMouseDown={e => view.onMouseDown(cell)} onMouseMove={e => view.onMouseMove(cell)} onMouseUp={e => view.onMouseUp(cell)} {...rest}/>
     }
 }
 
@@ -372,14 +396,13 @@ class GameView extends React.Component<{ width: number, height: number }> {
         requestAnimationFrame(this.frame)
     }
 
-    @action.bound onMouseDown(hex: Hex) {
+    @action.bound onMouseDown(cell: Cell) {
         this.isMouseDown = true
-        const targetCell = this.game.hexGrid.get(hex)
 
         if (this.selectedAbility === 'teleport') {
             const cells = this.game.playerCell.circle(6)
-            if (cells.indexOf(targetCell) !== -1) {
-                this.game.playerLocation = targetCell.hex
+            if (cells.indexOf(cell) !== -1) {
+                this.game.playerCell = cell
                 this.selectedAbility = undefined
                 this.game.numTeleports -= 1
                 this.game.endTurn()
@@ -393,20 +416,19 @@ class GameView extends React.Component<{ width: number, height: number }> {
                 this.game.endTurn()
             }
         } else {
-            const path = this.game.pathBetween(this.game.playerCell, targetCell)
-            if (path) {
-                this.game.playerLocation = path[0].hex
+            const path = this.game.pathBetween(this.game.playerCell, cell)
+            if (path && path[0].isEmpty) {
+                this.game.playerCell = path[0]
                 this.game.endTurn()
             }    
         }
     }
 
-    @action.bound onMouseMove(hex: Hex) {
-        const targetCell = this.game.hexGrid.get(hex)
-        this.cursor = targetCell
+    @action.bound onMouseMove(cell: Cell) {
+        this.cursor = cell
     }
 
-    @action.bound onMouseUp(hex: Hex) {
+    @action.bound onMouseUp(cell: Cell) {
         this.isMouseDown = false
     }
 
@@ -421,53 +443,31 @@ class GameView extends React.Component<{ width: number, height: number }> {
         const {game} = this
 
         return game.cells.map(cell => {
-            const hex = cell.hex
             const isSelected = this.currentSelection.indexOf(cell) !== -1
-            const isPlayer = hex.equals(game.playerLocation)
-
-            const points = this.hexToPolygon(hex)
-
-            return <polygon onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)} points={points} fill={(game.hexGrid.get(hex) as Cell).color} stroke={"#000"} strokeWidth={this.hexRadius/8}/>
+            const isPlayer = cell === game.playerCell
+            return <Tile fill={cell.color} stroke={"#000"} strokeWidth={this.hexRadius/8} cell={cell} view={this}/>
         })
     }
 
     renderPlayer() {
-        const {game} = this
-        const points = this.hexToPolygon(game.playerLocation)
-        return <polygon points={points} fill="lightgreen"/>
+        return <Tile fill={GREEN} cell={this.game.playerCell} view={this}/>
     }
 
     renderExit() {
-        const points = this.hexToPolygon(this.game.exitLocation)
-        return <polygon points={points} fill="white" onMouseDown={e => this.onMouseDown(this.game.exitLocation)}/>
+        return <Tile fill="white" cell={this.game.exitCell} view={this}/>
     }
 
     renderEnemies() {
         return this.game.enemies.map(enemy => {
-            const points = this.hexToPolygon(enemy.hex)
-            return <polygon points={points} fill="red"/>
-        })
-    }
-
-    renderPath() {
-        const {game} = this
-        const path = this.pathTarget && game.pathBetween(game.hexGrid.get(game.playerLocation), game.hexGrid.get(this.pathTarget))
-
-        if (path === undefined)
-            return
-
-        return path.map(cell => {
-            const points = this.hexToPolygon(cell.hex)
-            return <polygon points={points} fill="yellow"/>
+            return <Tile fill="red" cell={enemy.cell} view={this}/>
         })
     }
 
     renderTargetTeleport() {
-        const cells = this.game.playerCell.circle(6)
+        const cells = this.game.playerCell.circle(6).filter(cell => cell.isEmpty)
 
         return cells.map(cell => {
-            const points = this.hexToPolygon(cell.hex)
-            return <polygon points={points} fill="yellow" opacity={0.5} onMouseDown={e => this.onMouseDown(cell.hex)}/>
+            return <Tile fill={cell === this.cursor ? GREEN : "yellow"} opacity={cell === this.cursor ? 0.8 : 0.5} cell={cell} view={this}/>
         })
     }
 
@@ -477,14 +477,21 @@ class GameView extends React.Component<{ width: number, height: number }> {
             return <div id="game" className="success">
                 <h2>Success!</h2>
                 <div id="abilities">
-                    <button onClick={e => game.nextLevel()}>Continue</button>
+                    <button onClick={e => game.nextLevel()}>Next Floor</button>
                 </div>
             </div>
+        } else if (game.state == 'stuck') {
+            return <div id="game" className="stuck">
+                <h2>You got... stuck?</h2>
+                <div id="abilities">
+                    <button onClick={e => game.nextLevel()}>Restart</button>
+                </div>
+                </div>
         } else {
             return <div id="game" className="failure">
                 <h2>You were captured...</h2>
                 <div id="abilities">
-                    <button onClick={e => game.nextLevel()}>Continue</button>
+                    <button onClick={e => game.nextLevel()}>Restart</button>
                 </div>
             </div>
         }
@@ -494,9 +501,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
         if (!this.cursor) return
         const barrierCells = this.barrierStart ? this.barrierStart.lineTo(this.cursor) : [this.cursor]
         return barrierCells.map(cell => {
-            const points = this.hexToPolygon(cell.hex)
-            const hex = cell.hex
-            return <polygon points={points} fill="cyan" opacity={0.5} onMouseDown={e => this.onMouseDown(hex)} onMouseMove={e => this.onMouseMove(hex)} onMouseUp={e => this.onMouseUp(hex)}/>            
+            return <Tile fill="cyan" opacity={0.5} cell={cell} view={this}/> 
         })
     }
 
@@ -507,6 +512,25 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
     @action.bound toggleSelectTeleport() {
         this.selectedAbility = this.selectedAbility === 'teleport' ? undefined : 'teleport'
+    }
+
+    renderHoverInfo() {
+        const hoveredEnemy = this.game.enemies.find(enemy => enemy.cell === this.cursor)
+        if (hoveredEnemy) {
+            const path = hoveredEnemy.cell.pathTo(this.game.playerCell)
+            if (path) {
+                return path.map(cell =>
+                    <Tile fill="red" opacity={0.5} cell={cell} view={this}/>                    
+                )
+            }
+        } else if (this.game.exitCell === this.cursor) {
+            const path = this.game.playerCell.pathTo(this.cursor)
+            if (path) {
+                return path.map(cell => 
+                    <Tile fill={GREEN} opacity={0.5} cell={cell} view={this}/>
+                )
+            }
+        }
     }
 
     render() {
@@ -526,12 +550,13 @@ class GameView extends React.Component<{ width: number, height: number }> {
                 {this.renderPlayer()}
                 {this.renderExit()}
                 {this.renderEnemies()}
-                {this.selectedAbility === 'teleport' && this.renderTargetTeleport()}
+                {this.renderHoverInfo()}
                 {this.selectedAbility === 'barrier' && this.renderTargetBarrier()}
+                {this.selectedAbility === 'teleport' && this.renderTargetTeleport()}
             </svg>
             <div id="abilities">
-                <button onClick={e => this.toggleSelectBarrier() }>Barrier</button>
-                <button onClick={e => this.toggleSelectTeleport() } disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
+                <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() }>Barrier</button>
+                <button className={"teleport" + (this.selectedAbility === 'teleport' ? ' active' : "")} onClick={e => this.toggleSelectTeleport() } disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
             </div>
         </div>
     }

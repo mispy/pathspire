@@ -69,6 +69,8 @@
     "yaml-front-matter": "^3.4.0"
   },
   "devDependencies": {
+    "@types/lodash-es": "^4.17.0",
+    "lodash-es": "^4.17.4",
     "tinyqueue": "^1.2.3"
   }
 }

@@ -22,7 +22,7 @@ class Body extends React.Component<{path: string, assets: string[]}> {
         const js = assets.filter(value => value.match(/\.js$/))
 
         return <body>
-            <Helmet title="Jaiden Mispy"/>
+            <Helmet title="Hexgame Prototype"/>
             {js.map(path =>
                 <script src={'/'+path}/>  
             )}
@@ -36,7 +36,7 @@ class Head extends React.Component<{path: string, assets: string[], head: Helmet
         const {head, assets, path} = this.props
         const css = assets.filter(value => value.match(/\.css$/))
 
-        const description = `Since 2016 I have been working with Max Roser and the Oxford Martin School on Our World In Data. This project aims to make verifiable quantitative information about issues of global importance accessible and freely available to all of humanity.`
+        const description = `A little puzzle roguelike game on a hexagonal grid.`
 
         return <head>
             {head.title.toComponent()}
