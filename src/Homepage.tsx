@@ -13,7 +13,10 @@ declare const window: any
 const COLOR_EMPTY = "#343434"
 const COLOR_PLAYER = "lightgreen"
 const COLOR_BARRIER = "cyan"
+const COLOR_PILLAR = "orange"
 const COLOR_TELEPORT = "yellow"
+const COLOR_EXIT = "violet"
+const COLOR_ENEMY = "red"
 
 const TELEPORT_RANGE = 7
 
@@ -169,7 +172,7 @@ class HexGrid<T> {
 function hexagonPoints(cx: number, cy: number, size: number) {
     const path = []
     for (var i = 0; i < 6; i++) {
-        const angle = Math.PI/180 * (60*i + 30)
+        const angle = Math.PI/180 * 60*i
         path.push(Math.round(cx+size*Math.cos(angle))+","+Math.round(cy+size*Math.sin(angle)))
     }
     return path
@@ -185,16 +188,25 @@ class Cell {
         this.hex = hex
     }
 
-    get neighbors(): Cell[] {
+    @computed get neighbors(): Cell[] {
         return this.hex.neighbors.map(hex => this.game.hexGrid.get(hex)).filter(cell => cell)
     }
 
-    get isPathable(): boolean {
+    @computed get isPathable(): boolean {
         return this.color === COLOR_EMPTY
     }
 
-    get isEmpty(): boolean {
+    @computed get isEmpty(): boolean {
         return this.isPathable && this !== this.game.playerCell && !this.game.enemies.some(enemy => enemy.cell === this)
+    }
+
+    @computed get isSafe(): boolean {
+        for (let enemy of this.game.enemies) {
+            if (enemy.cell.neighbors.indexOf(this) !== -1)
+                return false
+        }
+
+        return true
     }
 
     circle(radius: number): Cell[] {
@@ -222,8 +234,18 @@ class Cell {
 // red tile enemies
 // create blue tile barriers to block path of enemies
 
-interface Enemy {
-    cell: Cell
+class Enemy {
+    game: Game
+    @observable cell: Cell
+
+    constructor(game: Game, cell: Cell) {
+        this.game = game
+        this.cell = cell
+    }
+
+    @computed get isDefeated(): boolean {
+        return this.cell.pathTo(this.game.playerCell).length == 0
+    }
 }
 
 class Game {
@@ -231,7 +253,7 @@ class Game {
     @observable exitCell: Cell
     @observable teleportCrystal?: Cell
     @observable enemies: Enemy[] = []
-    @observable numTeleports: number = 1
+    @observable numTeleports: number = 0
     @observable level = 1
     @observable state: 'game'|'success'|'failure'|'stuck' = 'game'
 
@@ -250,20 +272,30 @@ class Game {
         return this.ringHexes.map(hex => this.hexGrid.get(hex) as Cell)
     }
 
+    @computed get isSafe(): boolean {
+        return this.enemies.every(enemy => enemy.isDefeated)
+    }
+
     hexGrid: HexGrid<Cell>
     constructor() {
+        this.resetGame()
         this.setupBoard()
+    }
+
+    @action.bound resetGame() {
+        this.level = 1
+        this.numTeleports = 0
     }
 
     @action.bound setupBoard() {
         this.hexGrid = new HexGrid<Cell>()
         this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
-        this.exitCell = this.hexGrid.get(new Hex(3, -6, 3))
-        this.playerCell = this.hexGrid.get(new Hex(-3, 6, -3))
+        this.exitCell = this.hexGrid.get(new Hex(-6, 0, 6))
+        this.playerCell = this.hexGrid.get(new Hex(6, 0, -6))
         this.enemies = []
 
-        const barrierHexes = Hex.rings(Hex.zero, 0, 2)
-        barrierHexes.forEach(hex => this.hexGrid.get(hex).color = "orange")
+        const pillarHexes = Hex.rings(Hex.zero, sample([0, 1]) as number, sample([2, 3]) as number)
+        pillarHexes.forEach(hex => this.hexGrid.get(hex).color = COLOR_PILLAR)
 
         const playerNeighbors = this.playerCell.neighbors
         let spawnableCells = this.cells.filter(cell => cell.isEmpty && cell !== this.exitCell && playerNeighbors.indexOf(cell) === -1)
@@ -273,20 +305,21 @@ class Game {
         for (let i = 0; i < this.numEnemies; i++) {
             const cell = spawnableCells.pop()
             if (cell !== undefined)
-                this.enemies.push({ cell: cell })
+                this.enemies.push(new Enemy(this, cell))
         }
     }
 
     @action.bound nextLevel() {
         if (this.state == 'success')
             this.level += 1
-        else
-            this.level = 1
+        else {
+            this.resetGame()
+        }
         this.state = 'game'
         this.setupBoard()
     }
 
-    pathBetween(start: Cell, goal: Cell): Cell[]|undefined {
+    pathBetween(start: Cell, goal: Cell): Cell[] {
         const frontier = new PriorityQueue<Cell>()
         frontier.push(start, 0)
         const cameFrom: Map<Cell, Cell|undefined> = new Map()
@@ -314,7 +347,7 @@ class Game {
         }
 
         if (!cameFrom.has(goal))
-            return undefined
+            return []
         else {
             const path = []
             let current = goal
@@ -346,7 +379,7 @@ class Game {
 
         for (let enemy of this.enemies) {
             const path = this.pathBetween(enemy.cell, this.playerCell)
-            if (path && (path[0] === this.playerCell || path[0].isEmpty))
+            if (path.length && (path[0] === this.playerCell || path[0].isEmpty))
                 enemy.cell = path[0]
 
             if (enemy.cell === this.playerCell) {
@@ -355,7 +388,7 @@ class Game {
             }
         }
 
-        if (this.numTeleports === 0 && this.pathBetween(this.playerCell, this.exitCell) === undefined) {
+        if (this.numTeleports === 0 && this.pathBetween(this.playerCell, this.exitCell).length === 0) {
             this.state = 'stuck'
             return
         }
@@ -369,16 +402,20 @@ class Tile extends React.Component<{ fill: string, cell: Cell, view: GameView, o
     }
 }
 
+const Span = (props: { color: string, children: any }) => {
+    return <span style={{ color: props.color }}>{props.children}</span>
+}
+
 @observer
 class GameView extends React.Component<{ width: number, height: number }> {
-    @computed get game() { return new Game() }
-    @computed get hexRadius() { return Math.round(Math.min(this.props.width-50, this.props.height-100)/((this.game.ringSize+5)*2)) }
+    game: Game = new Game()
+    @computed get hexRadius() { return Math.round(Math.min(this.props.width, this.props.height-200)/((this.game.ringSize+5)*2)) }
     @computed get boardWidth() { return this.hexRadius*(this.game.ringSize+5)*2 }
-    @computed get boardHeight() { return this.hexRadius*(this.game.ringSize+5)*2 }
+    @computed get boardHeight() { return this.hexRadius*(this.game.ringSize+6)*2 }
     @computed get boardCenterX() { return this.boardWidth/2 }
     @computed get boardCenterY() { return this.boardHeight/2 }
 
-    @observable selectedAbility?: 'barrier'|'teleport'
+    @observable selectedAbility?: 'barrier'|'teleport'|'help'
 
     @observable isMouseDown: boolean = false
     @observable currentSelection: Cell[] = []
@@ -386,7 +423,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
     @observable barrierStart?: Cell
 
-    @observable cursor: Cell
+    @observable cursor?: Cell
 
     timeCounter = 0
     prevTime?: number
@@ -405,6 +442,13 @@ class GameView extends React.Component<{ width: number, height: number }> {
         requestAnimationFrame(this.frame)
     }
 
+    @action.bound finishBarrier() {
+        if (!this.barrierStart || !this.cursor) return
+        this.game.placeBarrier(this.barrierStart, this.cursor)
+        this.barrierStart = undefined
+        this.game.endTurn()
+    }
+
     @action.bound onMouseDown(cell: Cell) {
         this.isMouseDown = true
 
@@ -420,16 +464,20 @@ class GameView extends React.Component<{ width: number, height: number }> {
             if (this.barrierStart === undefined)
                 this.barrierStart = this.cursor
             else {
-                this.game.placeBarrier(this.barrierStart, this.cursor)
-                this.toggleSelectBarrier()
-                this.game.endTurn()
+                this.finishBarrier()
             }
         } else {
             const path = this.game.pathBetween(this.game.playerCell, cell)
-            if (path && path[0].isEmpty) {
-                this.game.playerCell = path[0]
-                this.game.endTurn()
-            }    
+            if (path.length) {
+                if (this.game.isSafe && (cell === this.game.teleportCrystal || cell === this.game.exitCell)) {
+                    // Fast move when safe
+                    this.game.playerCell = cell
+                    this.game.endTurn()
+                } else if (path[0].isEmpty) {
+                    this.game.playerCell = path[0]
+                    this.game.endTurn()
+                }
+            }
         }
     }
 
@@ -438,13 +486,16 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     @action.bound onMouseUp(cell: Cell) {
+        if (this.isMouseDown && this.barrierStart && this.barrierStart !== this.cursor)
+            this.finishBarrier()
+
         this.isMouseDown = false
     }
 
     hexToPolygon(hex: Hex): string {
         const {boardCenterX, boardCenterY, hexRadius} = this
-        const screenX = boardCenterX + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
-        const screenY = boardCenterY + hexRadius * 3/2 * hex.r
+        const screenX = boardCenterX + hexRadius * 3/2 * hex.r
+        const screenY = boardCenterY + hexRadius * Math.sqrt(3) * (hex.q + hex.r/2)
         return hexagonPoints(screenX, screenY, hexRadius).join(" ")
     }
 
@@ -463,13 +514,24 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     renderExit() {
-        return <Tile fill="white" cell={this.game.exitCell} view={this}/>
+        return <Tile fill={COLOR_EXIT} cell={this.game.exitCell} view={this}/>
     }
 
     renderEnemies() {
         return this.game.enemies.map(enemy => {
             return <Tile fill="red" cell={enemy.cell} view={this}/>
         })
+    }
+
+    renderEnemyPaths() {
+        const tiles: JSX.Element[] = []
+        this.game.enemies.forEach(enemy => {
+            const path = enemy.cell.pathTo(this.game.playerCell)
+            path.slice(0, -1).forEach(cell => tiles.push(
+                <Tile fill="red" opacity={0.05} cell={cell} view={this}/>
+            ))
+        })
+        return tiles
     }
 
     renderTargetTeleport() {
@@ -484,9 +546,9 @@ class GameView extends React.Component<{ width: number, height: number }> {
         const {game} = this
         if (game.state == 'success') {
             return <div id="game" className="success">
-                <h2>Success!</h2>
+                <h2>Floor {game.level+1}</h2>
                 <div id="abilities">
-                    <button onClick={e => game.nextLevel()}>Next Floor</button>
+                    <button onClick={e => game.nextLevel()}>Continue</button>
                 </div>
             </div>
         } else if (game.state == 'stuck') {
@@ -509,7 +571,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
     renderTargetBarrier() {
         if (!this.cursor) return
         const barrierCells = this.barrierStart ? this.barrierStart.lineTo(this.cursor) : [this.cursor]
-        return barrierCells.map(cell => {
+        return barrierCells.filter(cell => cell.isEmpty).map(cell => {
             return <Tile fill="cyan" opacity={0.5} cell={cell} view={this}/> 
         })
     }
@@ -519,21 +581,26 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     renderHoverInfo() {
+        if (this.selectedAbility !== undefined && this.selectedAbility !== 'help') return
+
         const hoveredEnemy = this.game.enemies.find(enemy => enemy.cell === this.cursor)
         if (hoveredEnemy) {
             const path = hoveredEnemy.cell.pathTo(this.game.playerCell)
-            if (path) {
-                return path.map(cell =>
-                    <Tile fill="red" opacity={0.5} cell={cell} view={this}/>                    
-                )
-            }
-        } else if (this.cursor == this.game.exitCell || this.cursor == this.game.teleportCrystal) {
+            return path.map(cell =>
+                <Tile fill="red" opacity={0.5} cell={cell} view={this}/>                    
+            )
+        } else if (this.cursor && (this.cursor === this.game.exitCell || this.cursor === this.game.teleportCrystal)) {
             const path = this.game.playerCell.pathTo(this.cursor)
-            if (path) {
-                return path.map(cell => 
-                    <Tile fill={COLOR_PLAYER} opacity={0.5} cell={cell} view={this}/>
-                )
-            }
+            let tiles = path.map(cell => {
+                let color = "orange"
+                if (this.game.isSafe)
+                    color = COLOR_PLAYER
+                else if (!cell.isSafe)
+                    color = COLOR_ENEMY
+                return <Tile fill={color} opacity={0.1} cell={cell} view={this}/>
+            })
+
+            return tiles
         }
     }
 
@@ -544,6 +611,10 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
     @action.bound toggleSelectTeleport() {
         this.selectedAbility = this.selectedAbility === 'teleport' ? undefined : 'teleport'
+    }
+    
+    @action.bound onMouseLeave() {
+        this.cursor = undefined
     }
 
     render() {
@@ -557,20 +628,32 @@ class GameView extends React.Component<{ width: number, height: number }> {
         }
 
         return <div id="game">
+            {this.selectedAbility === 'help' && <div className="help">
+                <h1>Spire of the Path</h1>
+                <p>A vast spire looms before you. You are a <Span color={COLOR_PLAYER}>luminous psionic being</Span> and you wish to ascend the spire, to search for a mystical artifact or rescue a cute guy or something.</p>
+                <p>On each floor you must reach the <Span color={COLOR_EXIT}>exit portal</Span> that leads to the next.</p>
+                <p>Your way is impeded by <Span color={COLOR_PILLAR}>ominous pillars</Span> and <Span color={COLOR_ENEMY}>chaotic entities</Span> who will try to capture you for their own nefarious ends. Watch out!</p>
+                <p>Fortunately, you have mastered the art of weaving <Span color={COLOR_BARRIER}>psionic barriers</Span>. But be careful not to block your own path...</p>
+                <p>Throughout the spire you will find single-use <Span color={COLOR_TELEPORT}>teleport crystals</Span>. They are helpful friends!</p>
+                <hr/>
+                <small>This little game was made over the weekend by <a href="https://mispy.me/">Jaiden Mispy</a>.</small>
+            </div>}
             <h2>Floor {game.level}</h2>
-            <svg width={boardWidth} height={boardHeight}>
+            <svg width={boardWidth} height={boardHeight} onMouseLeave={this.onMouseLeave}>
                 {this.renderTerrain()}
+                {this.renderEnemyPaths()}
                 {this.renderPlayer()}
                 {this.renderExit()}
                 {this.renderCrystal()}
                 {this.renderEnemies()}
-                {this.selectedAbility === undefined && this.renderHoverInfo()}
+                {this.renderHoverInfo()}
                 {this.selectedAbility === 'barrier' && this.renderTargetBarrier()}
                 {this.selectedAbility === 'teleport' && this.renderTargetTeleport()}
             </svg>
             <div id="abilities">
-                <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() }>Barrier</button>
+                <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() }>Place Barriers</button>
                 <button className={"teleport" + (this.selectedAbility === 'teleport' ? ' active' : "")} onClick={e => this.toggleSelectTeleport() } disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
+                <button className={"help" + (this.selectedAbility === 'help' ? ' active' : "")} onClick={e => this.selectedAbility = this.selectedAbility === 'help' ? undefined : 'help'}>Help</button>
             </div>
         </div>
     }

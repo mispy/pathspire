@@ -22,7 +22,7 @@ class Body extends React.Component<{path: string, assets: string[]}> {
         const js = assets.filter(value => value.match(/\.js$/))
 
         return <body>
-            <Helmet title="Hexgame Prototype"/>
+            <Helmet title="Spire of the Path"/>
             {js.map(path =>
                 <script src={'/'+path}/>  
             )}

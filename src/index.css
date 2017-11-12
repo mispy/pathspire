@@ -13,6 +13,10 @@ html {
 	font-size: 16px;
 }
 
+a {
+	color: #f5aa44;
+}
+
 main, #game {
 	height: 100%;
 	width: 100%;
@@ -39,8 +43,11 @@ main, #game {
 	color: white;
 	background: none;
 	-webkit-appearance: none;
-	margin-right: 12px;
 	cursor: pointer;
+}
+
+#abilities button:not(:last-child) {
+	margin-right: 12px;	
 }
 
 #abilities button:disabled {
@@ -60,6 +67,12 @@ main, #game {
 	border-color: yellow;
 }
 
+#abilities button.help.active {
+	background: lightgreen;
+	color: #333;
+	border-color: lightgreen;
+}
+
 #game.success {
 	color: lightgreen;
 }
@@ -70,4 +83,38 @@ main, #game {
 
 #game.stuck {
 	color: orange;
+}
+
+#game div.help {
+	position: fixed;
+	padding: 24px;
+	color: white;
+	background: rgba(0, 0, 0, 0.7);
+}
+
+#game div.help hr {
+	margin-top: 20px;
+	border-color: #999;
+	border-bottom-width: 1px;
+}
+
+#game div.help small {
+	color: #999;
+}
+
+@media screen and (min-width: 769px) {
+	#game div.help {
+		top: 0;
+		left: 0;	
+		width: 300px;
+		height: 100%;
+	}
+}
+
+@media screen and (max-width: 768px) {
+	#game div.help {
+		top: 0;
+		left: 0;
+		right: 0;
+	}
 }
