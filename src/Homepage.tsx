@@ -210,14 +210,21 @@ interface Enemy {
 class Game {
     @observable playerLocation: Hex
     @observable exitLocation: Hex
-    @observable numEnemies: number = 3
     @observable enemies: Enemy[] = []
     @observable numTeleports: number = 1
     @observable level = 1
     @observable state: 'game'|'success'|'failure' = 'game'
 
+    @computed get numEnemies(): number {
+        return this.level
+    }
+
     @computed get playerCell(): Cell {
         return this.hexGrid.get(this.playerLocation)
+    }
+
+    @computed get exitCell(): Cell {
+        return this.hexGrid.get(this.exitLocation)
     }
 
     @computed get ringSize() { return 8 }
@@ -244,9 +251,13 @@ class Game {
         const barrierHexes = Hex.rings(Hex.zero, 0, 2)
         barrierHexes.forEach(hex => this.hexGrid.get(hex).color = "orange")
 
+
+        const playerNeighbors = this.playerCell.neighbors
+        const spawnableCells = this.cells.filter(cell => cell.color === BLANK && cell !== this.playerCell && cell !== this.exitCell && playerNeighbors.indexOf(cell) === -1)
+
         this.enemies = []
         for (let i = 0; i < this.numEnemies; i++) {
-            this.enemies.push({ hex: (sample(this.cells) as Cell).hex })
+            this.enemies.push({ hex: (sample(spawnableCells) as Cell).hex })
         }
     }
 
@@ -334,12 +345,12 @@ class GameView extends React.Component<{ width: number, height: number }> {
     @computed get boardCenterX() { return this.boardWidth/2 }
     @computed get boardCenterY() { return this.boardHeight/2 }
 
+    @observable selectedAbility?: 'barrier'|'teleport'
+
     @observable isMouseDown: boolean = false
-    @observable isTargetTeleport: boolean = false
     @observable currentSelection: Cell[] = []
     @observable pathTarget: Hex
 
-    @observable isTargetBarrier: boolean = false
     @observable barrierStart?: Cell
 
     @observable cursor: Cell
@@ -365,19 +376,20 @@ class GameView extends React.Component<{ width: number, height: number }> {
         this.isMouseDown = true
         const targetCell = this.game.hexGrid.get(hex)
 
-        if (this.isTargetTeleport) {
+        if (this.selectedAbility === 'teleport') {
             const cells = this.game.playerCell.circle(6)
             if (cells.indexOf(targetCell) !== -1) {
                 this.game.playerLocation = targetCell.hex
-                this.isTargetTeleport = false
+                this.selectedAbility = undefined
                 this.game.numTeleports -= 1
+                this.game.endTurn()
             }
-        } else if (this.isTargetBarrier) {
+        } else if (this.selectedAbility === 'barrier') {
             if (this.barrierStart === undefined)
                 this.barrierStart = this.cursor
             else {
                 this.game.placeBarrier(this.barrierStart, this.cursor)
-                this.toggleTargetBarrier()
+                this.toggleSelectBarrier()
                 this.game.endTurn()
             }
         } else {
@@ -391,11 +403,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
     @action.bound onMouseMove(hex: Hex) {
         const targetCell = this.game.hexGrid.get(hex)
-
         this.cursor = targetCell
-        if (this.isTargetBarrier) {
-//            this.barrierStart = targetCell
-        }
     }
 
     @action.bound onMouseUp(hex: Hex) {
@@ -492,9 +500,13 @@ class GameView extends React.Component<{ width: number, height: number }> {
         })
     }
 
-    @action.bound toggleTargetBarrier() {
+    @action.bound toggleSelectBarrier() {
+        this.selectedAbility = this.selectedAbility === 'barrier' ? undefined : 'barrier'
         this.barrierStart = undefined
-        this.isTargetBarrier = !this.isTargetBarrier
+    }
+
+    @action.bound toggleSelectTeleport() {
+        this.selectedAbility = this.selectedAbility === 'teleport' ? undefined : 'teleport'
     }
 
     render() {
@@ -514,12 +526,12 @@ class GameView extends React.Component<{ width: number, height: number }> {
                 {this.renderPlayer()}
                 {this.renderExit()}
                 {this.renderEnemies()}
-                {this.isTargetTeleport && this.renderTargetTeleport()}
-                {this.isTargetBarrier && this.renderTargetBarrier()}
+                {this.selectedAbility === 'teleport' && this.renderTargetTeleport()}
+                {this.selectedAbility === 'barrier' && this.renderTargetBarrier()}
             </svg>
             <div id="abilities">
-                <button onClick={e => this.toggleTargetBarrier() }>Barrier</button>
-                <button onClick={e => this.isTargetTeleport = !this.isTargetTeleport} disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
+                <button onClick={e => this.toggleSelectBarrier() }>Barrier</button>
+                <button onClick={e => this.toggleSelectTeleport() } disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
             </div>
         </div>
     }
