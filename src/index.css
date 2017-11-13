@@ -62,6 +62,10 @@ button {
 }
 
 #abilities button.barrier.active {
+	width: 101px;	
+}
+
+#abilities button.barrier.active {
 	background: cyan;
 	color: #333;
 	border-color: cyan;
