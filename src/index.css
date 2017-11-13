@@ -5,7 +5,7 @@ html, body {
 	height: 100%;
 	margin: 0;
 	font-family: 'Helvetica', 'Arial', sans-serif;
-	color: #50585D;
+	color: white;
 	background: #1A1A1A;
 }
 
@@ -44,6 +44,8 @@ main, #game {
 	background: none;
 	-webkit-appearance: none;
 	cursor: pointer;
+	padding: 8px;
+	border: 1px solid white;
 }
 
 #abilities button:not(:last-child) {
@@ -73,15 +75,20 @@ main, #game {
 	border-color: lightgreen;
 }
 
-#game.success {
+#game.continue > div {
+	margin-bottom: 10px;
+	max-width: 400px;
+}
+
+#game.success h2 {
 	color: lightgreen;
 }
 
-#game.failure {
+#game.failure h2 {
 	color: red;
 }
 
-#game.stuck {
+#game.stuck h2 {
 	color: orange;
 }
 

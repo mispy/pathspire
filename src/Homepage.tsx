@@ -1,6 +1,6 @@
 import * as React from 'react'
 import * as ReactDOM from 'react-dom'
-import {observable, computed, action} from 'mobx'
+import {observable, computed, action, autorun, reaction} from 'mobx'
 import {observer} from 'mobx-react'
 import sample from 'lodash-es/sample'
 import sampleSize from 'lodash-es/sampleSize'
@@ -10,7 +10,7 @@ const TinyQueue = require('tinyqueue')
 
 declare const window: any
 
-const COLOR_EMPTY = "#343434"
+const COLOR_EMPTY = "#333"
 const COLOR_PLAYER = "lightgreen"
 const COLOR_BARRIER = "cyan"
 const COLOR_PILLAR = "orange"
@@ -19,6 +19,10 @@ const COLOR_EXIT = "violet"
 const COLOR_ENEMY = "red"
 
 const TELEPORT_RANGE = 7
+const REMINDER_FLOOR = 2
+const FINAL_FLOOR = 3
+
+const HEART: [number,number,number][] = [[0,0,0],[-1,0,1],[0,-1,1],[1,-1,0],[1,0,-1],[0,1,-1],[-1,1,0],[-1,-1,2],[0,-2,2],[1,-2,1],[2,-2,0],[2,-1,-1],[2,0,-2],[1,1,-2],[0,2,-2],[-1,2,-1],[-2,2,0],[-2,1,1],[-2,-1,3],[-1,-2,3],[0,-3,3],[1,-3,2],[2,-3,1],[3,-3,0],[3,-2,-1],[3,-1,-2],[3,0,-3],[2,1,-3],[1,2,-3],[0,3,-3],[-1,3,-2],[-2,3,-1],[-3,3,0],[-3,2,1],[-3,1,2],[-2,-2,4],[-1,-3,4],[0,-4,4],[1,-4,3],[2,-4,2],[4,-1,-3],[4,0,-4],[3,1,-4],[-2,4,-2],[-3,4,-1],[-4,4,0],[-4,3,1],[-4,2,2]]
 
 class PriorityQueue<T> {
     queue: any
@@ -254,11 +258,11 @@ class Game {
     @observable teleportCrystal?: Cell
     @observable enemies: Enemy[] = []
     @observable numTeleports: number = 0
-    @observable level = 1
-    @observable state: 'game'|'success'|'failure'|'stuck' = 'game'
+    @observable floor: number
+    @observable state: 'game'|'success'|'failure'|'stuck'|'final' = 'game'
 
     @computed get numEnemies(): number {
-        return this.level
+        return this.floor
     }
 
     @computed get ringSize() { return 8 }
@@ -276,23 +280,40 @@ class Game {
         return this.enemies.every(enemy => enemy.isDefeated)
     }
 
+    @computed get isEndgame(): boolean {
+        return this.floor === FINAL_FLOOR
+    }
+
     hexGrid: HexGrid<Cell>
     constructor() {
+        reaction(
+            () => this.floor,
+            this.setupBoard
+        )
+
+        this.hexGrid = new HexGrid<Cell>()
+        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
+
         this.resetGame()
-        this.setupBoard()
     }
 
     @action.bound resetGame() {
-        this.level = 1
+        this.floor = 1
         this.numTeleports = 0
+        this.setupBoard()
     }
 
     @action.bound setupBoard() {
-        this.hexGrid = new HexGrid<Cell>()
-        this.ringHexes.forEach(hex => this.hexGrid.set(hex, new Cell(this, hex)))
+        this.cells.forEach(cell => cell.color = COLOR_EMPTY)
+        this.teleportCrystal = undefined
         this.exitCell = this.hexGrid.get(new Hex(-6, 0, 6))
         this.playerCell = this.hexGrid.get(new Hex(6, 0, -6))
         this.enemies = []
+
+        if (this.isEndgame) {
+            this.exitCell = this.hexGrid.get(new Hex(0, 0, 0))
+            return
+        }
 
         const pillarHexes = Hex.rings(Hex.zero, sample([0, 1]) as number, sample([2, 3]) as number)
         pillarHexes.forEach(hex => this.hexGrid.get(hex).color = COLOR_PILLAR)
@@ -309,14 +330,13 @@ class Game {
         }
     }
 
-    @action.bound nextLevel() {
+    @action.bound nextFloor() {
         if (this.state == 'success')
-            this.level += 1
+            this.floor += 1
         else {
             this.resetGame()
         }
         this.state = 'game'
-        this.setupBoard()
     }
 
     pathBetween(start: Cell, goal: Cell): Cell[] {
@@ -373,7 +393,7 @@ class Game {
         }
 
         if (this.playerCell === this.exitCell) {
-            this.state = 'success'
+            this.state = this.isEndgame ? 'final' : 'success'
             return
         }
 
@@ -398,7 +418,7 @@ class Game {
 class Tile extends React.Component<{ fill: string, cell: Cell, view: GameView, opacity?: number, stroke?: string, strokeWidth?: number }> {
     render() {
         const {fill, cell, view, ...rest} = this.props
-        return <polygon points={view.hexToPolygon(cell.hex)} fill={fill} onMouseDown={e => view.onMouseDown(cell)} onMouseMove={e => view.onMouseMove(cell)} onMouseUp={e => view.onMouseUp(cell)} {...rest}/>
+        return <polygon points={view.hexToPolygon(cell.hex)} fill={fill} stroke="#000" strokeWidth={view.hexRadius/8} onMouseDown={e => view.onMouseDown(cell)} onMouseMove={e => view.onMouseMove(cell)} onMouseUp={e => view.onMouseUp(cell)} {...rest}/>
     }
 }
 
@@ -422,30 +442,13 @@ class GameView extends React.Component<{ width: number, height: number }> {
     @observable pathTarget: Hex
 
     @observable barrierStart?: Cell
-
     @observable cursor?: Cell
-
-    timeCounter = 0
-    prevTime?: number
-    paused: boolean = false
-    @action.bound frame(time: number) {
-        const deltaTime = time - (this.prevTime||time)
-        this.prevTime = time
-
-        /*const frameInterval = 20
-        this.timeCounter += deltaTime
-        if (this.timeCounter > frameInterval && !this.paused) {
-            this.game.frame()
-            this.timeCounter -= frameInterval
-        }*/
-
-        requestAnimationFrame(this.frame)
-    }
 
     @action.bound finishBarrier() {
         if (!this.barrierStart || !this.cursor) return
         this.game.placeBarrier(this.barrierStart, this.cursor)
         this.barrierStart = undefined
+        this.toggleSelectBarrier()
         this.game.endTurn()
     }
 
@@ -469,7 +472,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
         } else {
             const path = this.game.pathBetween(this.game.playerCell, cell)
             if (path.length) {
-                if (this.game.isSafe && (cell === this.game.teleportCrystal || cell === this.game.exitCell)) {
+                if (this.game.isSafe && !this.game.isEndgame && (cell === this.game.teleportCrystal || cell === this.game.exitCell)) {
                     // Fast move when safe
                     this.game.playerCell = cell
                     this.game.endTurn()
@@ -514,12 +517,12 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     renderExit() {
-        return <Tile fill={COLOR_EXIT} cell={this.game.exitCell} view={this}/>
+        return <Tile fill={this.game.isEndgame ? COLOR_PLAYER : COLOR_EXIT} cell={this.game.exitCell} view={this}/>
     }
 
     renderEnemies() {
         return this.game.enemies.map(enemy => {
-            return <Tile fill="red" cell={enemy.cell} view={this}/>
+            return <Tile fill={COLOR_ENEMY} cell={enemy.cell} view={this}/>
         })
     }
 
@@ -528,7 +531,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
         this.game.enemies.forEach(enemy => {
             const path = enemy.cell.pathTo(this.game.playerCell)
             path.slice(0, -1).forEach(cell => tiles.push(
-                <Tile fill="red" opacity={0.05} cell={cell} view={this}/>
+                <Tile fill={COLOR_ENEMY} opacity={0.05} cell={cell} view={this}/>
             ))
         })
         return tiles
@@ -545,24 +548,30 @@ class GameView extends React.Component<{ width: number, height: number }> {
     renderEndState() {
         const {game} = this
         if (game.state == 'success') {
-            return <div id="game" className="success">
-                <h2>Floor {game.level+1}</h2>
+            const nextFloor = game.floor+1
+            return <div id="game" className="continue success">
+                <h2>Floor {nextFloor}</h2>
+                {nextFloor === REMINDER_FLOOR && <div>
+                    <p>The spire's hum of activity reaches a feverish pitch, and ever more <Span color={COLOR_ENEMY}>chaos</Span> swarms ahead.</p>
+                    <p>You would really prefer to leave and go soak your etherfronds in a nice spirit lake.</p>
+                    <p>But ahead, barely perceptible through the rising din, you hear a <Span color={COLOR_PLAYER}>familiar mindsong</Span>...</p>
+                </div>}
                 <div id="abilities">
-                    <button onClick={e => game.nextLevel()}>Continue</button>
+                    <button onClick={e => game.nextFloor()}>Continue</button>
                 </div>
             </div>
         } else if (game.state == 'stuck') {
-            return <div id="game" className="stuck">
+            return <div id="game" className="continue stuck">
                 <h2>You got... stuck?</h2>
                 <div id="abilities">
-                    <button onClick={e => game.nextLevel()}>Restart</button>
+                    <button onClick={e => game.nextFloor()}>Restart</button>
                 </div>
                 </div>
         } else {
-            return <div id="game" className="failure">
+            return <div id="game" className="continue failure">
                 <h2>You were captured...</h2>
                 <div id="abilities">
-                    <button onClick={e => game.nextLevel()}>Restart</button>
+                    <button onClick={e => game.nextFloor()}>Restart</button>
                 </div>
             </div>
         }
@@ -572,7 +581,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
         if (!this.cursor) return
         const barrierCells = this.barrierStart ? this.barrierStart.lineTo(this.cursor) : [this.cursor]
         return barrierCells.filter(cell => cell.isEmpty).map(cell => {
-            return <Tile fill="cyan" opacity={0.5} cell={cell} view={this}/> 
+            return <Tile fill={COLOR_BARRIER} opacity={0.5} cell={cell} view={this}/> 
         })
     }
 
@@ -587,7 +596,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
         if (hoveredEnemy) {
             const path = hoveredEnemy.cell.pathTo(this.game.playerCell)
             return path.map(cell =>
-                <Tile fill="red" opacity={0.5} cell={cell} view={this}/>                    
+                <Tile fill={COLOR_ENEMY} opacity={0.5} cell={cell} view={this}/>                    
             )
         } else if (this.cursor && (this.cursor === this.game.exitCell || this.cursor === this.game.teleportCrystal)) {
             const path = this.game.playerCell.pathTo(this.cursor)
@@ -604,6 +613,13 @@ class GameView extends React.Component<{ width: number, height: number }> {
         }
     }
 
+    renderHeart() {
+        return HEART.map(coords => {
+            const cell = this.game.hexGrid.get(new Hex(coords[0], coords[1], coords[2]))
+            return <Tile fill={COLOR_PLAYER} cell={cell} view={this}/>
+        })
+    }
+
     @action.bound toggleSelectBarrier() {
         this.selectedAbility = this.selectedAbility === 'barrier' ? undefined : 'barrier'
         this.barrierStart = undefined
@@ -617,13 +633,28 @@ class GameView extends React.Component<{ width: number, height: number }> {
         this.cursor = undefined
     }
 
+    renderAbilities() {
+        const {game} = this
+
+        if (game.state === 'final')
+            return <div id="abilities">
+                <button onClick={e => game.nextFloor()}>Restart</button>
+            </div>
+
+        return <div id="abilities">
+            <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() } disabled={game.isEndgame}>Place Barrier</button>
+            <button className={"teleport" + (this.selectedAbility === 'teleport' ? ' active' : "")} onClick={e => this.toggleSelectTeleport() } disabled={game.isEndgame || game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
+            <button className={"help" + (this.selectedAbility === 'help' ? ' active' : "")} onClick={e => this.selectedAbility = this.selectedAbility === 'help' ? undefined : 'help'} disabled={game.isEndgame}>Help</button>
+        </div>
+    }
+
     render() {
         const {props, boardWidth, boardHeight, boardCenterX, boardCenterY, hexRadius, game} = this
 
         window.game = game
         window.gameView = this
 
-        if (game.state !== 'game') {
+        if (game.state !== 'game' && game.state !== 'final') {
             return this.renderEndState()
         }
 
@@ -634,11 +665,11 @@ class GameView extends React.Component<{ width: number, height: number }> {
                 <p>On each floor you must reach the <Span color={COLOR_EXIT}>exit portal</Span> that leads to the next.</p>
                 <p>Your way is impeded by <Span color={COLOR_PILLAR}>ominous pillars</Span> and <Span color={COLOR_ENEMY}>chaotic entities</Span> who will try to capture you for their own nefarious ends. Watch out!</p>
                 <p>Fortunately, you have mastered the art of weaving <Span color={COLOR_BARRIER}>psionic barriers</Span>. But be careful not to block your own path...</p>
-                <p>Throughout the spire you will find single-use <Span color={COLOR_TELEPORT}>teleport crystals</Span>. They are helpful friends!</p>
+                <p>Throughout the spire you will find single-use <Span color={COLOR_TELEPORT}>teleport crystals</Span>. These are helpful friends!</p>
                 <hr/>
-                <small>This little game was made over the weekend by <a href="https://mispy.me/">Jaiden Mispy</a>.</small>
+                <small>This little game was made over the weekend by <a href="https://mispy.me/">Jaiden Mispy</a>. You may peek at the <a href="https://github.com/mispy/spirepath">source code</a>.</small>
             </div>}
-            <h2>Floor {game.level}</h2>
+            <h2>Floor {game.floor}</h2>
             <svg width={boardWidth} height={boardHeight} onMouseLeave={this.onMouseLeave}>
                 {this.renderTerrain()}
                 {this.renderEnemyPaths()}
@@ -649,12 +680,9 @@ class GameView extends React.Component<{ width: number, height: number }> {
                 {this.renderHoverInfo()}
                 {this.selectedAbility === 'barrier' && this.renderTargetBarrier()}
                 {this.selectedAbility === 'teleport' && this.renderTargetTeleport()}
+                {this.game.state == 'final' && this.renderHeart()}
             </svg>
-            <div id="abilities">
-                <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() }>Place Barriers</button>
-                <button className={"teleport" + (this.selectedAbility === 'teleport' ? ' active' : "")} onClick={e => this.toggleSelectTeleport() } disabled={game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
-                <button className={"help" + (this.selectedAbility === 'help' ? ' active' : "")} onClick={e => this.selectedAbility = this.selectedAbility === 'help' ? undefined : 'help'}>Help</button>
-            </div>
+            {this.renderAbilities()}
         </div>
     }
 }

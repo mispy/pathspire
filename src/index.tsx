@@ -1,4 +1,3 @@
-//import 'babel-polyfill'
 import * as React from 'react'
 import * as ReactDOMServer from 'react-dom/server'
 import {Helmet, HelmetData} from 'react-helmet'
@@ -42,18 +41,6 @@ class Head extends React.Component<{path: string, assets: string[], head: Helmet
             {head.title.toComponent()}
             <meta name="viewport" content="width=device-width, initial-scale=1"/>
             <meta name="description" content={description}/>
-            {/*<meta name="twitter:title" content={head.title.toString()}/>
-            <meta name="twitter:url" content={"https://mispy.me" + path}/>
-            <meta name="twitter:description" content={description}/>
-            <meta name="twitter:image" content={"https://mispy.me/" + sunflowerImg}/>
-            <meta name="twitter:card" content="summary_large_image"/>*/}
-
-            {/*<meta property="og:locale" content="en_US"/>
-            <meta property="og:site_name" content="Jaiden Mispy"/>
-            <meta property="og:title" content="Jaiden Mispy"/>
-            <meta property="og:url" content={"https://mispy.me" + path}/>
-            <meta property="og:description" content={description}/>
-            <meta property="og:image" content={"https://mispy.me/" + sunflowerImg}/>*/}
             {head.meta.toComponent()}
             {css.map(cssPath =>
                 <link rel="stylesheet" type="text/css" href={'/'+cssPath}/>  
