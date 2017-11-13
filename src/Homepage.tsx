@@ -20,7 +20,7 @@ const COLOR_ENEMY = "red"
 
 const TELEPORT_RANGE = 8
 const REMINDER_FLOOR = 10
-const FINAL_FLOOR = 15
+const FINAL_FLOOR = 12
 
 const HEART: [number,number,number][] = [[0,0,0],[-1,0,1],[0,-1,1],[1,-1,0],[1,0,-1],[0,1,-1],[-1,1,0],[-1,-1,2],[0,-2,2],[1,-2,1],[2,-2,0],[2,-1,-1],[2,0,-2],[1,1,-2],[0,2,-2],[-1,2,-1],[-2,2,0],[-2,1,1],[-2,-1,3],[-1,-2,3],[0,-3,3],[1,-3,2],[2,-3,1],[3,-3,0],[3,-2,-1],[3,-1,-2],[3,0,-3],[2,1,-3],[1,2,-3],[0,3,-3],[-1,3,-2],[-2,3,-1],[-3,3,0],[-3,2,1],[-3,1,2],[-2,-2,4],[-1,-3,4],[0,-4,4],[1,-4,3],[2,-4,2],[4,-1,-3],[4,0,-4],[3,1,-4],[-2,4,-2],[-3,4,-1],[-4,4,0],[-4,3,1],[-4,2,2]]
 
@@ -643,7 +643,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
             </div>
 
         return <div id="abilities">
-            <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() } disabled={game.isEndgame}>Place Barrier</button>
+            <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() } disabled={game.isEndgame}>{this.selectedAbility === 'barrier' ? (this.barrierStart ? "Place End" : "Place Start") : "Barrier Wall"}</button>
             <button className={"teleport" + (this.selectedAbility === 'teleport' ? ' active' : "")} onClick={e => this.toggleSelectTeleport() } disabled={game.isEndgame || game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
             <button className={"help" + (this.isHelping? ' active' : "")} onClick={e => this.isHelping = !this.isHelping} disabled={game.isEndgame}>Help</button>
         </div>
@@ -665,7 +665,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
                 <p>A vast spire looms before you. You are a <Span color={COLOR_PLAYER}>luminous psionic being</Span> and you wish to ascend the spire, to search for a mystical artifact or rescue a cute guy or something.</p>
                 <p>On each floor you must reach the <Span color={COLOR_EXIT}>exit portal</Span> that leads to the next.</p>
                 <p>Your way is impeded by <Span color={COLOR_PILLAR}>ominous pillars</Span> and <Span color={COLOR_ENEMY}>chaotic entities</Span> who will try to capture you for their own nefarious ends. Watch out!</p>
-                <p>Fortunately, you have mastered the art of weaving <Span color={COLOR_BARRIER}>psionic barriers</Span>. But be careful not to block your own path...</p>
+                <p>Fortunately, you have mastered the art of weaving <Span color={COLOR_BARRIER}>psionic barriers</Span> to form defensive walls. But be careful not to block your own path...</p>
                 <p>Throughout the spire you will find single-use <Span color={COLOR_TELEPORT}>teleport crystals</Span>. These are helpful friends!</p>
                 <button onClick={e => this.isHelping = false}>Continue</button>
                 <hr/>
