@@ -18,7 +18,7 @@ const COLOR_TELEPORT = "yellow"
 const COLOR_EXIT = "violet"
 const COLOR_ENEMY = "red"
 
-const TELEPORT_RANGE = 7
+const TELEPORT_RANGE = 8
 const REMINDER_FLOOR = 10
 const FINAL_FLOOR = 15
 
