@@ -34,6 +34,10 @@ main, #game {
 	cursor: pointer;
 }
 
+#game svg {
+	margin: 10px 0;
+}
+
 #game:not(.success):not(.failure):not(.stuck) h2 {
 	margin: 0;
 	color: white;

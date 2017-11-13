@@ -429,7 +429,7 @@ const Span = (props: { color: string, children: any }) => {
 @observer
 class GameView extends React.Component<{ width: number, height: number }> {
     game: Game = new Game()
-    @computed get hexRadius() { return Math.round(Math.min(this.props.width, this.props.height-200)/((this.game.ringSize+5)*2)) }
+    @computed get hexRadius() { return Math.round(Math.min(this.props.width-50, this.props.height-250)/((this.game.ringSize+5)*2)) }
     @computed get boardWidth() { return this.hexRadius*(this.game.ringSize+5)*2 }
     @computed get boardHeight() { return this.hexRadius*(this.game.ringSize+6)*2 }
     @computed get boardCenterX() { return this.boardWidth/2 }
