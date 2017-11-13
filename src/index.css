@@ -39,7 +39,7 @@ main, #game {
 	color: white;
 }
 
-#abilities button {
+button {
 	color: white;
 	background: none;
 	-webkit-appearance: none;
@@ -96,7 +96,7 @@ main, #game {
 	position: fixed;
 	padding: 24px;
 	color: white;
-	background: rgba(0, 0, 0, 0.7);
+	background: rgba(0, 0, 0, 0.9);
 }
 
 #game div.help hr {
@@ -116,6 +116,10 @@ main, #game {
 		width: 300px;
 		height: 100%;
 	}
+
+	#game div.help button {
+		display: none;
+	}
 }
 
 @media screen and (max-width: 768px) {
@@ -123,5 +127,6 @@ main, #game {
 		top: 0;
 		left: 0;
 		right: 0;
+		bottom: 0;
 	}
 }

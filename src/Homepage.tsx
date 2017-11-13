@@ -435,7 +435,8 @@ class GameView extends React.Component<{ width: number, height: number }> {
     @computed get boardCenterX() { return this.boardWidth/2 }
     @computed get boardCenterY() { return this.boardHeight/2 }
 
-    @observable selectedAbility?: 'barrier'|'teleport'|'help'
+    @observable selectedAbility?: 'barrier'|'teleport'
+    @observable isHelping: boolean = false
 
     @observable isMouseDown: boolean = false
     @observable currentSelection: Cell[] = []
@@ -590,7 +591,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
     }
 
     renderHoverInfo() {
-        if (this.selectedAbility !== undefined && this.selectedAbility !== 'help') return
+        if (this.selectedAbility !== undefined) return
 
         const hoveredEnemy = this.game.enemies.find(enemy => enemy.cell === this.cursor)
         if (hoveredEnemy) {
@@ -644,7 +645,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
         return <div id="abilities">
             <button className={"barrier" + (this.selectedAbility === 'barrier' ? ' active' : "")} onClick={e => this.toggleSelectBarrier() } disabled={game.isEndgame}>Place Barrier</button>
             <button className={"teleport" + (this.selectedAbility === 'teleport' ? ' active' : "")} onClick={e => this.toggleSelectTeleport() } disabled={game.isEndgame || game.numTeleports == 0}>Teleport x{game.numTeleports}</button>
-            <button className={"help" + (this.selectedAbility === 'help' ? ' active' : "")} onClick={e => this.selectedAbility = this.selectedAbility === 'help' ? undefined : 'help'} disabled={game.isEndgame}>Help</button>
+            <button className={"help" + (this.isHelping? ' active' : "")} onClick={e => this.isHelping = !this.isHelping} disabled={game.isEndgame}>Help</button>
         </div>
     }
 
@@ -659,13 +660,14 @@ class GameView extends React.Component<{ width: number, height: number }> {
         }
 
         return <div id="game">
-            {this.selectedAbility === 'help' && <div className="help">
+            {this.isHelping && <div className="help">
                 <h1>Spire of the Path</h1>
                 <p>A vast spire looms before you. You are a <Span color={COLOR_PLAYER}>luminous psionic being</Span> and you wish to ascend the spire, to search for a mystical artifact or rescue a cute guy or something.</p>
                 <p>On each floor you must reach the <Span color={COLOR_EXIT}>exit portal</Span> that leads to the next.</p>
                 <p>Your way is impeded by <Span color={COLOR_PILLAR}>ominous pillars</Span> and <Span color={COLOR_ENEMY}>chaotic entities</Span> who will try to capture you for their own nefarious ends. Watch out!</p>
                 <p>Fortunately, you have mastered the art of weaving <Span color={COLOR_BARRIER}>psionic barriers</Span>. But be careful not to block your own path...</p>
                 <p>Throughout the spire you will find single-use <Span color={COLOR_TELEPORT}>teleport crystals</Span>. These are helpful friends!</p>
+                <button onClick={e => this.isHelping = false}>Continue</button>
                 <hr/>
                 <small>This little game was made over the weekend by <a href="https://mispy.me/">Jaiden Mispy</a>. You may peek at the <a href="https://github.com/mispy/spirepath">source code</a>.</small>
             </div>}
