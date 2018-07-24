@@ -5,7 +5,7 @@ import Homepage from './Homepage'
 
 declare var require: any
 const faviconImg = require('./favicon.png')
-const styles = require('./index.css')
+require('./index.css')
 
 class Body extends React.Component<{path: string, assets: string[]}> {
     content() {
@@ -21,7 +21,7 @@ class Body extends React.Component<{path: string, assets: string[]}> {
         const js = assets.filter(value => value.match(/\.js$/))
 
         return <body>
-            <Helmet title="Spire of the Path"/>
+            <Helmet title="Pathspire"/>
             {js.map(path =>
                 <script src={'/'+path}/>  
             )}

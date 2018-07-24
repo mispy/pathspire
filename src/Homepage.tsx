@@ -661,7 +661,7 @@ class GameView extends React.Component<{ width: number, height: number }> {
 
         return <div id="game">
             {this.isHelping && <div className="help">
-                <h1>Spire of the Path</h1>
+                <h1>Pathspire</h1>
                 <p>A vast spire looms before you. You are a <Span color={COLOR_PLAYER}>luminous psionic being</Span> and you wish to ascend the spire, to search for a mystical artifact or rescue a cute guy or something.</p>
                 <p>On each floor you must reach the <Span color={COLOR_EXIT}>exit portal</Span> that leads to the next.</p>
                 <p>Your way is impeded by <Span color={COLOR_PILLAR}>ominous pillars</Span> and <Span color={COLOR_ENEMY}>chaotic entities</Span> who will try to capture you for their own nefarious ends. Watch out!</p>
